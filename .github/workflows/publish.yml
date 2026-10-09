@@ -1,0 +1,112 @@
+name: Publish bundle
+
+# Daily: build the next vulnerability bundle from the previous release and
+# the sources, sign it, verify it and publish it as a GitHub Release.
+#
+# Two jobs on purpose. "build" talks to the sources and never sees the
+# signing key. "publish" runs in the protected "publish" environment (only
+# the default branch can deploy to it), holds the signing key and nothing
+# else, and only signs, verifies and uploads what "build" produced.
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+    inputs:
+      allow_mass_change:
+        description: "Publish even though the removal guard refused (only after checking the source)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Test
+        run: go test ./...
+      - name: Build the CLI
+        run: go build -trimpath -ldflags "-X main.version=${GITHUB_SHA::12}" -o vulnfeed ./cmd/vulnfeed
+      - name: Download the previous release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p prev
+          if gh release view --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release download --repo "$GITHUB_REPOSITORY" --dir prev --pattern 'snapshot*' --pattern 'latest.dsse.json' --pattern 'keyset.dsse.json'
+            echo "PREV=--prev=prev" >> "$GITHUB_ENV"
+          fi
+      - name: Build the bundle
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+          MASS: ${{ inputs.allow_mass_change && '--allow-mass-change' || '' }}
+        run: ./vulnfeed build --out out --root-key-id "$(cat keys/root-keyid.txt)" $PREV $MASS
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bundle
+          path: out/
+          retention-days: 3
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: publish
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Build the CLI
+        run: go build -trimpath -o vulnfeed ./cmd/vulnfeed
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bundle
+          path: out
+      - name: Sign
+        env:
+          VULNFEED_SIGNING_KEY: ${{ secrets.VULNFEED_SIGNING_KEY }}
+        run: ./vulnfeed sign --dir out --keyset keys/keyset.dsse.json --root-key-id "$(cat keys/root-keyid.txt)"
+      - name: Verify as the platform does
+        run: ./vulnfeed verify --dir out --root-key-id "$(cat keys/root-keyid.txt)"
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$(python3 -c 'import json,base64,sys; e=json.load(open("out/latest.dsse.json")); print(json.loads(base64.b64decode(e["payload"]))["tag"])')"
+          cat > notes.md <<'EOF'
+          Vulnerability bundle for OpenCTEM (RFC-066 §5.5): a signed snapshot and the delta from the previous release.
+
+          This product uses data from the NVD API but is not endorsed or certified by the NVD.
+          See NOTICE for the terms of every source.
+          EOF
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --title "$tag" --notes-file notes.md out/*
+      - name: Keep the last 60 releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 1000 --json tagName,createdAt \
+            --jq 'sort_by(.createdAt) | reverse | .[60:] | .[].tagName' |
+          while read -r tag; do
+            gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+          done
