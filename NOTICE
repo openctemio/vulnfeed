@@ -1,0 +1,29 @@
+vulnfeed
+Copyright 2026 The OpenCTEM Authors
+
+This software is licensed under the Apache License, Version 2.0 (LICENSE).
+
+The bundles this software publishes contain data from third-party sources,
+under their own terms:
+
+NVD (National Vulnerability Database, NIST)
+  This product uses data from the NVD API but is not endorsed or certified
+  by the NVD. NVD data is a work of the U.S. government, not subject to
+  copyright in the United States. Terms of use:
+  https://nvd.nist.gov/developers/terms-of-use
+
+Planned sources (not yet in the bundles):
+
+CVE List (CVE Program)
+  CVE® is a registered trademark of The MITRE Corporation. Use is subject to
+  the CVE Terms of Use: https://www.cve.org/Legal/TermsOfUse
+
+OSV and the GitHub Advisory Database
+  Each record keeps its source and licence; GitHub Advisory Database data is
+  licensed under CC-BY 4.0: https://github.com/github/advisory-database
+
+CISA Known Exploited Vulnerabilities catalog
+  A work of the U.S. government (public domain).
+
+EPSS (Exploit Prediction Scoring System)
+  EPSS scores from FIRST.org: https://www.first.org/epss
