@@ -18,6 +18,17 @@ Design: OpenCTEM RFC-066 §5.5, *Feed: collector and signed bundles*.
 | `snapshot-{products,vulns,ranges}.jsonl.gz` | the full corpus |
 | `delta.manifest.dsse.json`, `delta-*.jsonl.gz` | what changed since the previous sequence (each touched vulnerability with its complete new range set) |
 | `keyset.dsse.json` | the key set the manifests are signed under |
+| `latest.v2.dsse.json` | bundle v2: signed pointer that pins the digest of each v2 manifest |
+| `snapshot.v2.manifest.dsse.json`, `delta.v2.manifest.dsse.json` | bundle v2: signed manifests listing, per record stream (`products`, `vulns`, `ranges`), the chunks with SHA-256, sizes, record counts and first and last record id |
+| `sha256-<hex>.jsonl.gz` | bundle v2 chunks: gzip JSON Lines of the same records as v1, named by their digest |
+
+Bundle v2 (OpenCTEM RFC-070) carries the same records as v1 in chunks of
+about 2,000 records, split by record id: the same data always gives the
+same chunks, and a changed vulnerability changes few chunks, so a consumer
+fetches only the chunks it does not have. It is signed with the same keys
+and key set as v1. v1 stays in every release for one release cycle and is
+then removed; read v2 with the `pkg/transfer/bundle` consumer of the
+OpenCTEM SDK. `vulnfeed verify` checks both formats.
 
 A platform reads
 `https://github.com/openctemio/vulnfeed/releases/latest/download/latest.dsse.json`
