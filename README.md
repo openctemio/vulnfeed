@@ -9,6 +9,18 @@ download (or, air-gapped, upload) a bundle, verify it and import it.
 
 Design: OpenCTEM RFC-066 §5.5, *Feed: collector and signed bundles*.
 
+## Using it with your platform
+
+Nothing is installed on your hosts: the platform downloads (or, air-gapped,
+reads) a release, verifies it against the root key id you pin and imports
+it. Set `VULNFEED_ROOT_KEY_ID` on the API (from `keys/root-keyid.txt`); without
+it no bundle is imported. Setup, air-gapped use and how to check the import:
+[Vulnerability and program feeds](https://docs.openctem.io/operations/feeds/)
+on docs.openctem.io.
+
+No release is published yet: the first one follows the key ceremony in
+[`keys/README.md`](keys/README.md).
+
 ## What a release contains
 
 | Asset | Content |
