@@ -120,6 +120,7 @@ the canonical CPE product:
 | `curated` | a reviewed entry in `internal/alias/curated.tsv`; never overridden |
 | `learned` | the name and one CPE product appear for the same affected item (its own CPEs, the ADP's CPEs for it, or the only NVD product of a CVE with one unnamed CNA product) in at least 3 CVEs, with at least 90% agreement |
 | `part` | the same vendor:product is a known CPE product under another part (operating system, hardware) |
+| `variant` | the product name without the vendor's name in front ("Microsoft Edge") or without a generic trailing word ("NX-OS Software") is a known CPE product of the same (or mapped) vendor |
 | `vendor` | the CNA vendor maps to a CPE vendor (curated, or learned from at least 5 CVEs at 90%) and vendor:product is a known CPE product |
 
 Every build learns from the CVE List records it reads (kept per CVE in
@@ -131,6 +132,17 @@ matches once a later dictionary resolves it) and is listed in the stats.
 Coverage, in the stats and the build log, is the share of published CVE List
 records that name a CPE product or a resolved name, or name no product at
 all (placeholders such as "n/a", or only a package name): the target is 95%.
+The stats also count, among the unresolved, the CVEs whose vendor no CPE
+product uses at all (`new_vendor`: no CPE identity exists to resolve to).
+
+Measured on a full first build (2026-10-18: 391,285 published CVE List
+records, NVD and the CVE List baseline): 7,520 entries; coverage 90.7%
+(96.3% counting `new_vendor`); 17,001 CVEs that name their product only by
+CNA strings resolve to a CPE product through an entry. For CVEs of 2026
+alone: 74,906 published, 12,004 resolve through an entry, coverage 79.1%
+(91.9% counting `new_vendor`). The most frequent unresolved names are
+combined product lists and products no CPE names yet; they are the input for
+curated entries.
 
 The inputs are public advisory text: names are sanitised and normalised,
 malformed CPE values dropped, every learned mapping needs repeated agreeing

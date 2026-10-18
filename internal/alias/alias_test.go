@@ -219,3 +219,30 @@ func TestCuratedWinsOverLearned(t *testing.T) {
 		t.Errorf("got %s %s", got, b)
 	}
 }
+
+// The product name repeats the vendor or ends in a generic word: the
+// shorter name resolves only when it is a known CPE product.
+func TestVariants(t *testing.T) {
+	d, err := Build(state(Obs{ID: "CVE-1", Names: []string{"a:microsoft:microsoft_edge"}}), []string{"a:microsoft:edge", "o:cisco:nx-os"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{"a:microsoft:microsoft_edge": "a:microsoft:edge", "a:cisco:cisco_nx-os_software": "o:cisco:nx-os",
+		"a:cisco:nx-os_software": "o:cisco:nx-os", "a:microsoft:microsoft_unknown": ""} {
+		got, b, ok := d.Resolve(name)
+		if want == "" {
+			if ok {
+				t.Errorf("%s resolved to %s", name, got)
+			}
+			continue
+		}
+		if got != want || b != BasisVariant {
+			t.Errorf("%s: %s %s", name, got, b)
+		}
+	}
+	// A vendor with no CPE product at all is reported as a new vendor.
+	st := d.Coverage(state(Obs{ID: "CVE-2", Names: []string{"a:brandnew:thing"}}, Obs{ID: "CVE-3", Names: []string{"a:microsoft:nothing"}}), 0)
+	if st.Unresolved != 2 || st.NewVendor != 1 {
+		t.Errorf("%+v", st)
+	}
+}

@@ -222,6 +222,7 @@ const (
 	BasisLearned = "learned"
 	BasisVendor  = "vendor"
 	BasisPart    = "part"
+	BasisVariant = "variant"
 )
 
 // Dictionary maps name keys to CPE products.
@@ -229,6 +230,7 @@ type Dictionary struct {
 	products map[string]Entry
 	vendors  map[string]string // CNA vendor key → CPE vendor
 	vocab    map[string]bool   // known CPE products
+	cpeVend  map[string]bool   // vendors of known CPE products
 	byVP     map[string]string // "vendor:product" → a known "part:vendor:product"
 }
 
@@ -239,6 +241,11 @@ type Stats struct {
 	Resolved     int `json:"resolved"`
 	Unresolvable int `json:"unresolvable"`
 	Unresolved   int `json:"unresolved"`
+	// NewVendor: of the unresolved, the CVEs whose every CNA name has a
+	// vendor no CPE product uses (directly or through a vendor mapping):
+	// there is no CPE identity to resolve to, so the CNA name is the
+	// product's identity. Reported apart, not counted in Coverage.
+	NewVendor int `json:"new_vendor"`
 	// Coverage is (Resolved + Unresolvable) / Published.
 	Coverage float64 `json:"coverage"`
 	// ResolvedByName counts the resolved CVEs that name their product only
@@ -304,12 +311,14 @@ func Build(state map[string]Obs, extraVocab []string) (*Dictionary, error) {
 	if err != nil {
 		return nil, err
 	}
-	d := &Dictionary{products: map[string]Entry{}, vendors: map[string]string{}, vocab: map[string]bool{}, byVP: map[string]string{}}
+	d := &Dictionary{products: map[string]Entry{}, vendors: map[string]string{}, vocab: map[string]bool{}, byVP: map[string]string{},
+		cpeVend: map[string]bool{}}
 	addVocab := func(c string) {
 		if !ValidCPEKey(c) {
 			return
 		}
 		d.vocab[c] = true
+		d.cpeVend[strings.Split(c, ":")[1]] = true
 		vp := c[2:]
 		if cur, ok := d.byVP[vp]; !ok || c < cur {
 			d.byVP[vp] = c
@@ -398,7 +407,43 @@ func (d *Dictionary) Resolve(name string) (string, string, bool) {
 			return c, BasisVendor, true
 		}
 	}
+	// The product name repeats the vendor ("Microsoft Edge") or ends in a
+	// generic word ("NX-OS Software"): the shorter name, when it is a known
+	// CPE product of the same (or the mapped) vendor.
+	vendors := []string{parts[1]}
+	if cv, ok := d.vendors[parts[1]]; ok {
+		vendors = append(vendors, cv)
+	}
+	for _, p := range productVariants(parts[1], parts[2]) {
+		for _, v := range vendors {
+			if c, ok := d.byVP[v+":"+p]; ok {
+				return c, BasisVariant, true
+			}
+		}
+	}
 	return "", "", false
+}
+
+// Generic trailing words of a product name.
+var genericSuffixes = []string{"_software", "_firmware", "_application", "_app", "_plugin", "_server_software"}
+
+// productVariants returns shorter forms of a product name: without the
+// vendor's name in front, without a generic trailing word, and both.
+func productVariants(vendor, product string) []string {
+	var out []string
+	base := []string{product}
+	if p := strings.TrimPrefix(product, vendor+"_"); p != product && p != "" {
+		out = append(out, p)
+		base = append(base, p)
+	}
+	for _, b := range base {
+		for _, sfx := range genericSuffixes {
+			if p := strings.TrimSuffix(b, sfx); p != b && p != "" {
+				out = append(out, p)
+			}
+		}
+	}
+	return out
 }
 
 // Entries returns the dictionary entries for every name key the state
@@ -476,6 +521,9 @@ func (d *Dictionary) Coverage(state map[string]Obs, entries int) Stats {
 			continue
 		}
 		st.Unresolved++
+		if d.allNewVendors(o.Names) {
+			st.NewVendor++
+		}
 		for _, n := range o.Names {
 			unresolved[n]++
 		}
@@ -507,4 +555,16 @@ func (d *Dictionary) Map(entries []Entry) map[string]string {
 		m[e.Value] = e.Target
 	}
 	return m
+}
+
+// allNewVendors reports whether no name's vendor (or mapped vendor) is the
+// vendor of a known CPE product.
+func (d *Dictionary) allNewVendors(names []string) bool {
+	for _, n := range names {
+		v := strings.Split(n, ":")[1]
+		if d.cpeVend[v] || d.cpeVend[d.vendors[v]] {
+			return false
+		}
+	}
+	return true
 }

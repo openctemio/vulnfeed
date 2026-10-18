@@ -21,6 +21,8 @@ cpe     a:atlassian:jira_server               a:atlassian:jira
 cpe     a:atlassian:jira_data_center          a:atlassian:jira
 # The kernel CNA names the product "Linux" by vendor "Linux".
 cpe     a:linux:linux                         o:linux:linux_kernel
+# Upstream enrichment consistently states the 1809 CPE for this product.
+cpe     a:microsoft:windows_10_version_2004   o:microsoft:windows_10_2004
 
 vendor  the_apache_software_foundation        apache
 vendor  apache_software_foundation            apache
