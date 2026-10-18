@@ -31,6 +31,10 @@ const (
 	maxRemovedShare = 0.02
 	minRemovedLimit = 500
 	cursorOverlap   = 10 * time.Minute
+	// Scheduled runs start a few minutes late or early: a build this close
+	// to the NVD minimum interval reads NVD rather than waiting a whole
+	// extra run.
+	nvdIntervalSlack = 15 * time.Minute
 )
 
 // Pager fetches NVD pages; *nvd.Client implements it.
@@ -91,7 +95,7 @@ func Build(ctx context.Context, prev *bundle.Snapshot, pager Pager, opt Options)
 	}
 	nvdAsOf := started
 	switch {
-	case !since.IsZero() && opt.NVDMinInterval > 0 && started.Sub(since) < opt.NVDMinInterval:
+	case !since.IsZero() && opt.NVDMinInterval > 0 && started.Sub(since)+nvdIntervalSlack < opt.NVDMinInterval:
 		// Too soon to ask NVD again: keep its cursor for the next build.
 		nvdAsOf = since
 		if opt.Log != nil {

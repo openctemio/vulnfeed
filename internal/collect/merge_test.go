@@ -310,12 +310,13 @@ func TestNVDMinIntervalKeepsCursor(t *testing.T) {
 	if len(pager.queries) != 0 || !s.SourceAsOf("nvd").Equal(now.Add(-time.Hour)) || !s.SourceAsOf("cve5").Equal(now) || len(list.windows) != 1 {
 		t.Fatalf("queries %d nvd %v cve5 %v windows %d", len(pager.queries), s.SourceAsOf("nvd"), s.SourceAsOf("cve5"), len(list.windows))
 	}
-	// Two hours after the last NVD read, NVD is read from its cursor.
-	s, err = Build(context.Background(), s, pager, Options{Now: now.Add(time.Hour), CVEList: list, NVDMinInterval: 2 * time.Hour})
+	// About two hours after the last NVD read (a run that starts a few
+	// minutes early included), NVD is read from its cursor.
+	s, err = Build(context.Background(), s, pager, Options{Now: now.Add(time.Hour - 5*time.Minute), CVEList: list, NVDMinInterval: 2 * time.Hour})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(pager.queries) == 0 || !pager.queries[0].ModifiedGTE.Equal(now.Add(-time.Hour-cursorOverlap)) || !s.SourceAsOf("nvd").Equal(now.Add(time.Hour)) {
+	if len(pager.queries) == 0 || !pager.queries[0].ModifiedGTE.Equal(now.Add(-time.Hour-cursorOverlap)) || !s.SourceAsOf("nvd").Equal(now.Add(time.Hour-5*time.Minute)) {
 		t.Fatalf("queries %+v nvd %v", pager.queries, s.SourceAsOf("nvd"))
 	}
 }
