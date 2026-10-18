@@ -43,7 +43,7 @@ type AliasManifest struct {
 
 // WriteAliases writes the dictionary entries, the learner state and the
 // unsigned manifest into dir. The version is prev's when the entries file
-// is byte-identical to prev's, else prev's plus one (1 without prev).
+// is byte-identical to prev's, else the release sequence (above prev's).
 func WriteAliases(dir string, sequence uint64, prev *AliasManifest, entries []alias.Entry, state map[string]alias.Obs,
 	stats alias.Stats, now time.Time) (*AliasManifest, error) {
 	if len(entries) > alias.MaxEntries || len(state) > alias.MaxStateObs {
@@ -84,12 +84,18 @@ func WriteAliases(dir string, sequence uint64, prev *AliasManifest, entries []al
 	}
 	sf.Name, sf.Records = AliasesStateFile, len(ids)
 	now = now.UTC().Truncate(time.Second)
-	m := &AliasManifest{Schema: AliasesSchema, Sequence: sequence, Version: 1, CreatedAt: now, ExpiresAt: now.Add(Validity),
+	// The version is the release sequence the entries last changed in:
+	// it only grows, even when the previous dictionary could not be read
+	// (a platform applies only a version above the one it applied, so a
+	// restart from 1 would stall every platform).
+	m := &AliasManifest{Schema: AliasesSchema, Sequence: sequence, Version: sequence, CreatedAt: now, ExpiresAt: now.Add(Validity),
 		Files: []File{ef, sf}, Stats: stats}
 	if prev != nil {
-		m.Version = prev.Version + 1
-		if len(prev.Files) > 0 && prev.Files[0].SHA256 == ef.SHA256 {
+		switch {
+		case len(prev.Files) > 0 && prev.Files[0].SHA256 == ef.SHA256:
 			m.Version = prev.Version
+		case m.Version <= prev.Version:
+			m.Version = prev.Version + 1
 		}
 	}
 	return m, writeJSON(filepath.Join(dir, unsignedAliasesManifest), m)

@@ -220,6 +220,28 @@ func TestCuratedWinsOverLearned(t *testing.T) {
 	}
 }
 
+// Poisoning: however many records pair a known CPE product's own name with
+// another CPE, no learned entry repoints it (only curated.tsv can).
+func TestLearnedNeverRepointsAKnownProduct(t *testing.T) {
+	var obs []Obs
+	for i := 0; i < 50; i++ {
+		obs = append(obs, pair(fmt.Sprintf("CVE-%d", i), "a:apache:http_server", "a:evil:http_server"))
+	}
+	obs = append(obs, Obs{ID: "CVE-nvd", CPEs: []string{"a:apache:http_server"}})
+	d, err := Build(state(obs...), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, b, _ := d.Resolve("a:apache:http_server"); got != "a:apache:http_server" || b != "" {
+		t.Errorf("got %s %s", got, b)
+	}
+	for _, e := range d.Entries(state(obs...)) {
+		if e.Value == "a:apache:http_server" {
+			t.Errorf("entry %+v", e)
+		}
+	}
+}
+
 // The product name repeats the vendor or ends in a generic word: the
 // shorter name resolves only when it is a known CPE product.
 func TestVariants(t *testing.T) {

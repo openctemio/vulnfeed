@@ -350,6 +350,13 @@ func Build(state map[string]Obs, extraVocab []string) (*Dictionary, error) {
 		}
 	}
 	for name, targets := range pairCount {
+		// A name that is itself a known CPE product is that product: only a
+		// curated entry may say otherwise. Otherwise a CNA that writes a
+		// well-known product's name next to another CPE in a few records
+		// could repoint the real product (and on a platform, fold it).
+		if d.vocab[name] {
+			continue
+		}
 		if t, n, ok := winner(targets, minSupport); ok && t != name {
 			d.products[name] = Entry{Kind: "cpe", Value: name, Target: t, Basis: BasisLearned, Support: n}
 		}

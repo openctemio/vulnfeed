@@ -47,8 +47,8 @@ func verifiedKeySet(t *testing.T, k keys) *dsse.KeySet {
 func TestAliasesRoundTripAndVersion(t *testing.T) {
 	k := newKeys(t)
 	dir, m := buildWithAliases(t, k, nil, testEntries)
-	if m.Version != 1 {
-		t.Fatalf("version %d", m.Version)
+	if m.Version != 7 {
+		t.Fatalf("version %d, want the release sequence", m.Version)
 	}
 	got, err := VerifyAliases(dir, verifiedKeySet(t, k), 7)
 	if err != nil || got == nil {
@@ -62,13 +62,18 @@ func TestAliasesRoundTripAndVersion(t *testing.T) {
 	if err != nil || len(state) != 2 || state["CVE-2026-0002"].Missing != alias.MissingNoProduct {
 		t.Fatalf("state %v %v", state, err)
 	}
-	// Same entries: same version; changed entries: the next version.
-	if _, m2 := buildWithAliases(t, k, got, testEntries); m2.Version != 1 {
+	// Same entries: same version; changed entries: a higher version.
+	if _, m2 := buildWithAliases(t, k, got, testEntries); m2.Version != 7 {
 		t.Errorf("unchanged entries got version %d", m2.Version)
 	}
 	changed := append([]alias.Entry{{Kind: "cpe", Value: "a:acme:x", Target: "a:acme_software:x", Basis: alias.BasisLearned}}, testEntries...)
-	if _, m3 := buildWithAliases(t, k, got, changed); m3.Version != 2 {
+	if _, m3 := buildWithAliases(t, k, got, changed); m3.Version != 8 {
 		t.Errorf("changed entries got version %d", m3.Version)
+	}
+	// Without a readable previous dictionary the version still does not
+	// go back (the release sequence, not 1).
+	if _, m4 := buildWithAliases(t, k, nil, changed); m4.Version != 7 {
+		t.Errorf("no previous dictionary got version %d", m4.Version)
 	}
 }
 

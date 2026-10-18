@@ -30,7 +30,7 @@ No release is published yet: the first one follows the key ceremony in
 | `snapshot-{products,vulns,ranges}.jsonl.gz` | the full corpus |
 | `delta.manifest.dsse.json`, `delta-*.jsonl.gz` | what changed since the previous sequence (each touched vulnerability with its complete new range set) |
 | `keyset.dsse.json` | the key set the manifests are signed under |
-| `aliases.manifest.dsse.json` | signed manifest of the alias dictionary: the bundle sequence it belongs to, the dictionary version, the files below (SHA-256, sizes, counts) and the coverage stats |
+| `aliases.manifest.dsse.json` | signed manifest of the alias dictionary: the bundle sequence it belongs to, the dictionary version (the release sequence the entries last changed in, so it only grows), the files below (SHA-256, sizes, counts) and the coverage stats |
 | `aliases.jsonl.gz` | the alias dictionary: CNA vendor/product names (and alternate CPE products) → canonical CPE product |
 | `aliases-state.jsonl.gz` | what each published CVE List record says about product identity (the learner's input, carried from release to release) |
 | `latest.v2.dsse.json` | bundle v2: signed pointer that pins the digest of each v2 manifest |
@@ -146,8 +146,11 @@ curated entries.
 
 The inputs are public advisory text: names are sanitised and normalised,
 malformed CPE values dropped, every learned mapping needs repeated agreeing
-evidence, curated entries win, and the dictionary is signed with the bundle
-keys and bound to the release sequence.
+evidence, curated entries win, no learned entry is made for a name that is
+itself a known CPE product (only a curated entry can repoint one), and the
+dictionary is signed with the bundle keys and bound to the release sequence.
+Each entry carries its basis: a platform lets only `curated` entries fold a
+product that has data of its own and holds the rest for review.
 
 ## Verifying a bundle yourself
 
