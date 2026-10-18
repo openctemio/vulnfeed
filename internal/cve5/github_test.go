@@ -259,3 +259,16 @@ func TestResponseCap(t *testing.T) {
 		t.Fatal("over-cap response accepted")
 	}
 }
+
+func TestChangedRemovedFileIsNotRevived(t *testing.T) {
+	f := newFakeRepo(t)
+	f.changes[commitNew] = []map[string]string{{"filename": pathA, "status": "removed", "sha": commitNew}}
+	c := testClient(t, f)
+	var got []Record
+	if err := c.Changed(context.Background(), time.Now().Add(-time.Hour), time.Now(), func(r Record) { got = append(got, r) }); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 || f.hits["/raw/CVEProject/cvelistV5/"+commitOld+"/"+pathA] != 0 {
+		t.Fatalf("a record removed at the end of the window was read from an older commit: %+v", got)
+	}
+}

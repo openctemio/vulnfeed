@@ -240,6 +240,9 @@ func FuzzDecode(f *testing.F) {
 			if err := r.Validate(); err != nil {
 				t.Fatalf("invalid range: %v", err)
 			}
+			if r.Exact == "" && r.Start == "" && r.End == "" {
+				t.Fatalf("range covers every version: %+v", r)
+			}
 		}
 		for _, p := range rec.Products {
 			if err := p.Validate(); err != nil {
@@ -247,4 +250,38 @@ func FuzzDecode(f *testing.F) {
 			}
 		}
 	})
+}
+
+func TestStatementsNeverWidenToAllVersions(t *testing.T) {
+	rec := func(versions string) Record {
+		t.Helper()
+		doc := `{"dataType":"CVE_RECORD","dataVersion":"5.1","cveMetadata":{"cveId":"CVE-2026-1001","state":"PUBLISHED"},` +
+			`"containers":{"cna":{"affected":[{"vendor":"acme","product":"tool","defaultStatus":"affected","versions":[` + versions + `]}]}}}`
+		r, ok, err := Decode(strings.NewReader(doc))
+		if err != nil || !ok {
+			t.Fatalf("ok %v err %v", ok, err)
+		}
+		return r
+	}
+	for name, versions := range map[string]string{
+		"zero to star":       `{"version":"0","lessThan":"*","status":"affected"}`,
+		"star to star":       `{"version":"*","lessThanOrEqual":"*","status":"affected","versionType":"semver"}`,
+		"empty to star":      `{"version":"","lessThan":"*","status":"affected"}`,
+		"default status":     `{"version":"2.0","status":"unaffected"}`,
+		"open with carveout": `{"version":"1.0","lessThan":"*","status":"affected"},{"version":"1.4.2","lessThanOrEqual":"1.4.9","status":"unaffected"}`,
+	} {
+		if r := rec(versions); len(r.Ranges) != 0 {
+			t.Errorf("%s: ranges %+v", name, r.Ranges)
+		}
+	}
+	// Bounded ranges stay, and an open-ended one without carve-outs is what
+	// the CNA states.
+	r := rec(`{"version":"0","lessThan":"1.2","status":"affected"},{"version":"1.2","status":"unaffected"}`)
+	if len(r.Ranges) != 1 || r.Ranges[0].End != "1.2" || r.Ranges[0].Start != "" {
+		t.Fatalf("bounded: %+v", r.Ranges)
+	}
+	r = rec(`{"version":"3.0","lessThan":"*","status":"affected"}`)
+	if len(r.Ranges) != 1 || r.Ranges[0].Start != "3.0" || r.Ranges[0].End != "" {
+		t.Fatalf("open-ended: %+v", r.Ranges)
+	}
 }

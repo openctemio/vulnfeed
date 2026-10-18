@@ -82,7 +82,11 @@ vendor and product name (written in the CPE naming convention), and a
 version, `lessThan` or `lessThanOrEqual` bound of type semver, custom or
 none. Statements with status changes, other version orderings (git, rpm,
 maven, ...), commit hashes, packages (`packageName`) and placeholder names
-are dropped, never widened to "all versions".
+are dropped, never widened to "all versions". So is a range with no bound
+(`0` or `*` up to `*`), and an open-ended range (`lessThan: "*"`) in an item
+that also states unaffected versions inside it (backported fixes), since the
+bundle cannot carry that subtraction. The default status never becomes a
+range.
 
 Beyond what becomes ranges, each CVE List record keeps, cleaned and capped,
 its references, the CNA's complete affected list (vendor, product, package

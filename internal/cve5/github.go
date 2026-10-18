@@ -323,6 +323,7 @@ func (c *Client) changedFiles(ctx context.Context, from, to time.Time) ([]change
 	// Newest commit first: the first commit that names a file is the one
 	// whose version is current at the end of the window.
 	byName := map[string]changedFile{}
+	removed := map[string]bool{}
 	for _, sha := range commits {
 		for page := 1; ; page++ {
 			if page > maxFilePages {
@@ -339,17 +340,23 @@ func (c *Client) changedFiles(ctx context.Context, from, to time.Time) ([]change
 				return nil, err
 			}
 			for _, f := range commit.Files {
-				if f.Status == "removed" || !recordPath.MatchString(f.Filename) {
+				if !recordPath.MatchString(f.Filename) {
 					continue
 				}
-				if _, seen := byName[f.Filename]; seen {
+				if _, seen := byName[f.Filename]; seen || removed[f.Filename] {
+					continue
+				}
+				// Removed at the end of the window: an older commit's
+				// version must not bring it back.
+				if f.Status == "removed" {
+					removed[f.Filename] = true
 					continue
 				}
 				if !shaPattern.MatchString(f.SHA) {
 					return nil, fmt.Errorf("cve5: blob id %q", f.SHA)
 				}
 				byName[f.Filename] = changedFile{name: f.Filename, blob: f.SHA, commit: sha}
-				if len(byName) > maxChangedFiles {
+				if len(byName)+len(removed) > maxChangedFiles {
 					return nil, ErrTooManyChanges
 				}
 			}

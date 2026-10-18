@@ -427,6 +427,7 @@ func (rec *Record) addAffected(id string, a affectedJSON) {
 		}
 		targets = append(targets, target{product: p})
 	}
+	carveOuts := hasCarveOuts(a.Versions)
 	for _, t := range targets {
 		var ranges []model.Range
 		base := model.Range{Vuln: id, Product: t.product.Key, Scheme: "generic", Source: "cve5"}
@@ -437,7 +438,7 @@ func (rec *Record) addAffected(id string, a affectedJSON) {
 			if i >= MaxVersionsPerItem {
 				break
 			}
-			if r, ok := versionRange(base, ver); ok {
+			if r, ok := versionRange(base, ver, carveOuts); ok {
 				ranges = append(ranges, r)
 			}
 		}
@@ -461,11 +462,54 @@ func (rec *Record) addAffected(id string, a affectedJSON) {
 	}
 }
 
+// hasCarveOuts reports whether an item states unaffected (or unknown)
+// versions inside its affected ones. The bundle cannot carry that
+// subtraction, so an open-ended affected range in such an item would cover
+// the fixed versions too. A non-affected statement that only marks a
+// boundary of an affected statement (the fix version an affected range
+// ends at, or the versions below where an affected range starts) is not a
+// carve-out. Without a version comparator here, anything else counts as
+// one.
+func hasCarveOuts(versions []versionJSON) bool {
+	bounds := map[string]bool{}
+	var other []versionJSON
+	for i, v := range versions {
+		if i >= MaxVersionsPerItem {
+			break
+		}
+		if strings.EqualFold(strings.TrimSpace(v.Status), "affected") {
+			for _, b := range []string{v.Version, v.LessThan, v.LessThanOrEqual} {
+				if b = strings.TrimSpace(b); b != "" {
+					bounds[b] = true
+				}
+			}
+			continue
+		}
+		other = append(other, v)
+	}
+	for _, v := range other {
+		ver, end := strings.TrimSpace(v.Version), strings.TrimSpace(v.LessThan)
+		if end == "" {
+			end = strings.TrimSpace(v.LessThanOrEqual)
+		}
+		switch {
+		case end == "" && bounds[ver]:
+			// "fixed in": the version an affected range ends at.
+		case (ver == "0" || ver == "") && end != "" && bounds[end]:
+			// below the version an affected range starts at.
+		default:
+			return true
+		}
+	}
+	return false
+}
+
 // versionRange converts one version statement. Only "affected" statements
 // become ranges; a statement with status changes, an ordering the generic
-// comparator does not know or a version that is not comparable is
-// dropped (never widened to "all versions").
-func versionRange(base model.Range, v versionJSON) (model.Range, bool) {
+// comparator does not know, a version that is not comparable, a range
+// with no bound at all ("0" or "*" up to "*") or, with carveOuts, a range
+// with no upper bound is dropped (never widened to "all versions").
+func versionRange(base model.Range, v versionJSON, carveOuts bool) (model.Range, bool) {
 	if !strings.EqualFold(strings.TrimSpace(v.Status), "affected") || len(v.Changes) > 0 ||
 		!versionTypes[strings.ToLower(strings.TrimSpace(v.VersionType))] {
 		return model.Range{}, false
@@ -492,6 +536,9 @@ func versionRange(base model.Range, v versionJSON) (model.Range, bool) {
 		return model.Range{}, false
 	default:
 		r.Exact = ver
+	}
+	if r.Exact == "" && r.End == "" && (r.Start == "" || carveOuts) {
+		return model.Range{}, false
 	}
 	for _, b := range []string{r.Exact, r.Start, r.End} {
 		if b != "" && !comparable(b) {
