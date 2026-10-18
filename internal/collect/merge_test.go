@@ -296,3 +296,26 @@ func TestSignedBundleWithCVEListVerifies(t *testing.T) {
 		t.Fatal("tampered delta accepted")
 	}
 }
+
+func TestNVDMinIntervalKeepsCursor(t *testing.T) {
+	now := time.Date(2026, 10, 9, 2, 0, 0, 0, time.UTC)
+	prev := bundle.NewSnapshot()
+	prev.Sources = []bundle.Source{{Name: "nvd", AsOf: now.Add(-time.Hour)}, {Name: "cve5", AsOf: now.Add(-time.Hour)}}
+	pager := &fakePager{}
+	list := &fakeList{}
+	s, err := Build(context.Background(), prev, pager, Options{Now: now, CVEList: list, NVDMinInterval: 2 * time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pager.queries) != 0 || !s.SourceAsOf("nvd").Equal(now.Add(-time.Hour)) || !s.SourceAsOf("cve5").Equal(now) || len(list.windows) != 1 {
+		t.Fatalf("queries %d nvd %v cve5 %v windows %d", len(pager.queries), s.SourceAsOf("nvd"), s.SourceAsOf("cve5"), len(list.windows))
+	}
+	// Two hours after the last NVD read, NVD is read from its cursor.
+	s, err = Build(context.Background(), s, pager, Options{Now: now.Add(time.Hour), CVEList: list, NVDMinInterval: 2 * time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pager.queries) == 0 || !pager.queries[0].ModifiedGTE.Equal(now.Add(-time.Hour-cursorOverlap)) || !s.SourceAsOf("nvd").Equal(now.Add(time.Hour)) {
+		t.Fatalf("queries %+v nvd %v", pager.queries, s.SourceAsOf("nvd"))
+	}
+}

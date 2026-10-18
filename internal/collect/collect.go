@@ -56,7 +56,11 @@ type Options struct {
 	// CVEList, when set, is read after NVD (see merge.go for the
 	// precedence between the two).
 	CVEList CVEList
-	Log     func(format string, args ...any)
+	// NVDMinInterval, when set, skips NVD in a build less than this after
+	// the previous NVD read (its cursor is kept), so an hourly build asks
+	// NVD for changes at the cadence NVD asks clients to keep.
+	NVDMinInterval time.Duration
+	Log            func(format string, args ...any)
 }
 
 // Build returns the next snapshot. prev may be nil (first build).
@@ -85,11 +89,19 @@ func Build(ctx context.Context, prev *bundle.Snapshot, pager Pager, opt Options)
 			applyRecord(next, rec)
 		}
 	}
-	if since.IsZero() {
+	nvdAsOf := started
+	switch {
+	case !since.IsZero() && opt.NVDMinInterval > 0 && started.Sub(since) < opt.NVDMinInterval:
+		// Too soon to ask NVD again: keep its cursor for the next build.
+		nvdAsOf = since
+		if opt.Log != nil {
+			opt.Log("nvd: last read %s ago, under the %s minimum; skipped this build", started.Sub(since), opt.NVDMinInterval)
+		}
+	case since.IsZero():
 		if err := pages(ctx, pager, nvd.Query{}, apply, opt.Log); err != nil {
 			return nil, err
 		}
-	} else {
+	default:
 		from := since.Add(-cursorOverlap)
 		for from.Before(started) {
 			to := from.Add(nvd.MaxWindow)
@@ -103,7 +115,7 @@ func Build(ctx context.Context, prev *bundle.Snapshot, pager Pager, opt Options)
 		}
 	}
 	src := nvdSource
-	src.AsOf = started
+	src.AsOf = nvdAsOf
 	next.Sources = []bundle.Source{src}
 	if opt.CVEList != nil {
 		var cveSince time.Time

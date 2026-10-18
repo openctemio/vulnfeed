@@ -63,7 +63,7 @@ run on.
 
 | Source | What it gives | How it is read |
 |---|---|---|
-| NVD CVE API 2.0 | CVE records, CPE configurations (ranges with source `nvd`), scores | CVEs modified since the previous build, in windows of at most 120 days |
+| NVD CVE API 2.0 | CVE records, CPE configurations (ranges with source `nvd`), scores | CVEs modified since the previous build, in windows of at most 120 days; at most every two hours (`--nvd-min-interval`), a build in between keeps the NVD cursor |
 | CVE List (CVE JSON 5.x, `CVEProject/cvelistV5`) | the CNA's record: state (published or rejected), description, dates, CNA score (CVSS 4.0, 3.1, 3.0), CWEs, affected products and versions (ranges with source `cve5`) | records changed by commits since the previous build, each checked against its git blob id; the first build, or a window with more changes than an incremental read takes, reads the daily baseline archive (checked against its published SHA-256) and the changes since |
 
 Merge precedence (`internal/collect/merge.go`):

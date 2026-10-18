@@ -1,7 +1,7 @@
 // Command vulnfeed builds, signs and verifies OpenCTEM vulnerability
 // bundles (RFC-066 §5.5), and manages the signing keys.
 //
-//	vulnfeed build  --out DIR [--prev DIR] [--root-key-id ID] [--allow-mass-change] [--cve-list=false]
+//	vulnfeed build  --out DIR [--prev DIR] [--root-key-id ID] [--allow-mass-change] [--cve-list=false] [--nvd-min-interval D]
 //	vulnfeed sign   --dir DIR --keyset FILE --root-key-id ID     (key in $VULNFEED_SIGNING_KEY)
 //	vulnfeed verify --dir DIR --root-key-id ID [--applied N] [--allow-expired]
 //	vulnfeed keys root-init --out FILE
@@ -67,6 +67,7 @@ func cmdBuild(ctx context.Context, args []string) error {
 	root := fs.String("root-key-id", os.Getenv("VULNFEED_ROOT_KEY_ID"), "pinned root key id")
 	mass := fs.Bool("allow-mass-change", false, "publish even when the guard refuses")
 	trial := fs.Duration("trial-since", 0, "without --prev: read only CVEs modified in this window (a trial, never published)")
+	nvdEvery := fs.Duration("nvd-min-interval", 2*time.Hour, "read NVD changes at most this often (a build in between keeps NVD's cursor)")
 	cveList := fs.Bool("cve-list", true, "also read the CVE List (GitHub API token in $GITHUB_TOKEN raises the rate limit)")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -86,7 +87,7 @@ func cmdBuild(ctx context.Context, args []string) error {
 		}
 		logf("previous release: sequence %d, %d vulnerabilities", prev.Sequence, len(prev.Vulns))
 	}
-	opt := collect.Options{Now: now, AllowMassChange: *mass, Since: sinceOf(now, *trial), Log: logf}
+	opt := collect.Options{Now: now, AllowMassChange: *mass, Since: sinceOf(now, *trial), NVDMinInterval: *nvdEvery, Log: logf}
 	if *cveList {
 		c := cve5.NewClient(os.Getenv("GITHUB_TOKEN"))
 		c.Log = logf
