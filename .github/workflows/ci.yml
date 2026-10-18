@@ -29,5 +29,6 @@ jobs:
         run: |
           go test ./internal/model -run '^$' -fuzz '^FuzzValidVersion$' -fuzztime 20s
           go test ./internal/nvd -run '^$' -fuzz '^FuzzDecodePage$' -fuzztime 20s
+          go test ./internal/cve5 -run '^$' -fuzz '^FuzzDecode$' -fuzztime 20s
       - name: Known vulnerabilities
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...

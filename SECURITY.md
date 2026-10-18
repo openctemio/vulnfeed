@@ -35,6 +35,18 @@ raise false ones everywhere, so:
   the stored ranges would disappear at once, unless a maintainer overrides
   it after checking the source. Platforms re-validate every record with
   their own parsers and apply the same guard.
+- **Source reads.** Sources are read over HTTPS only. The CVE List is read
+  from its GitHub repository: each changed record is fetched at the commit
+  that last changed it and must hash to the git blob id the GitHub API
+  names for it, and the daily baseline archive must match the SHA-256
+  digest the release API publishes for it. Redirects are followed only to
+  GitHub hosts, and the build's GitHub token goes to the API host only.
+  Records are capped at 4 MiB, the baseline at 2 GiB (4 GiB unpacked), and
+  a record filed under another id is skipped.
+- **Untrusted text.** Text from a source (descriptions, names, reasons) is
+  sanitised before it is signed: invalid UTF-8, control characters,
+  zero-width and bidirectional formatting characters are removed, line
+  breaks become spaces, and every field is clipped to its limit.
 - **Size.** Manifests are capped at 1 MiB, files at 512 MiB compressed and
   2 GiB decompressed; records are read one line at a time.
 

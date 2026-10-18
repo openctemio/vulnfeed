@@ -322,12 +322,12 @@ func Convert(n nvdCVE) (Record, bool) {
 	rec := Record{Products: map[string]model.Product{}}
 	v := &rec.Vuln
 	v.ID = id
-	v.Status = clip(strings.TrimSpace(sanitize(n.VulnStatus)), 32)
+	v.Status = model.Clip(strings.TrimSpace(model.Sanitize(n.VulnStatus)), 32)
 	rec.Rejected = strings.EqualFold(v.Status, "Rejected")
 	v.Published, v.Modified = parseTime(n.Published), parseTime(n.LastModified)
 	for _, d := range n.Descriptions {
 		if d.Lang == "en" {
-			v.Description = clip(sanitize(d.Value), model.MaxDescriptionLen)
+			v.Description = model.Clip(model.Sanitize(d.Value), model.MaxDescriptionLen)
 			break
 		}
 	}
@@ -392,10 +392,10 @@ func (rec *Record) addConfig(id, operator string, nodes []nvdNode) {
 			if !ok {
 				continue
 			}
-			rec.Products[c.Key()] = productOf(c)
+			rec.Products[c.Key()] = ProductOf(c)
 			if condition != nil && condition.Key() != c.Key() {
 				r.Condition = condition.Key()
-				rec.Products[condition.Key()] = productOf(*condition)
+				rec.Products[condition.Key()] = ProductOf(*condition)
 			}
 			if r.Validate() != nil {
 				continue
@@ -405,8 +405,9 @@ func (rec *Record) addConfig(id, operator string, nodes []nvdNode) {
 	}
 }
 
-func productOf(c CPE) model.Product {
-	return model.Product{Key: c.Key(), Part: c.Part, Vendor: c.Vendor, Name: clip(strings.ReplaceAll(c.Product, "_", " "), model.MaxNameLen),
+// ProductOf is the bundle product a CPE names.
+func ProductOf(c CPE) model.Product {
+	return model.Product{Key: c.Key(), Part: c.Part, Vendor: c.Vendor, Name: model.Clip(strings.ReplaceAll(c.Product, "_", " "), model.MaxNameLen),
 		CPEVendor: c.Vendor, CPEProduct: c.Product}
 }
 
@@ -418,14 +419,14 @@ func rangeOf(id string, m nvdMatch) (model.Range, CPE, bool) {
 	if err != nil || c.Version == NA || strings.Contains(c.Product, ":") {
 		return model.Range{}, CPE{}, false
 	}
-	r := model.Range{Vuln: id, Product: c.Key(), Scheme: "generic", Source: "nvd", Edition: qualifier(c.SWEdition), Target: qualifier(c.TargetSW)}
+	r := model.Range{Vuln: id, Product: c.Key(), Scheme: "generic", Source: "nvd", Edition: Qualifier(c.SWEdition), Target: Qualifier(c.TargetSW)}
 	bounded := m.VersionStartIncluding != "" || m.VersionStartExcluding != "" || m.VersionEndIncluding != "" || m.VersionEndExcluding != ""
 	if c.Version != Any {
 		if bounded {
 			return model.Range{}, CPE{}, false
 		}
 		r.Exact = c.Version
-		if u := qualifier(c.Update); u != "" {
+		if u := Qualifier(c.Update); u != "" {
 			r.Exact += u
 		}
 		return r, c, model.ValidVersion(r.Exact)
@@ -450,7 +451,9 @@ func rangeOf(id string, m nvdMatch) (model.Range, CPE, bool) {
 	return r, c, true
 }
 
-func qualifier(s string) string {
+// Qualifier normalises a CPE edition or target field: lower case, empty
+// for any, not applicable or an over-long value.
+func Qualifier(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
 	if s == Any || s == NA || len(s) > model.MaxQualifierLen {
 		return ""
@@ -487,7 +490,7 @@ func pickCVSS(n nvdCVE) (*model.CVSS, string) {
 		if !cvssVector.MatchString(vector) {
 			vector = ""
 		}
-		return &model.CVSS{Version: clip(m.CVSSData.Version, 8), Score: score, Vector: vector}, sev
+		return &model.CVSS{Version: model.Clip(m.CVSSData.Version, 8), Score: score, Vector: vector}, sev
 	}
 	return nil, ""
 }
@@ -515,24 +518,4 @@ func parseTime(s string) *time.Time {
 		}
 	}
 	return nil
-}
-
-func sanitize(s string) string {
-	s = strings.ToValidUTF8(s, "")
-	return strings.Map(func(r rune) rune {
-		if r == '\n' || r == '\t' || r == '\r' {
-			return ' '
-		}
-		if r < 0x20 || r == 0x7f {
-			return -1
-		}
-		return r
-	}, s)
-}
-
-func clip(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return strings.ToValidUTF8(s[:n], "")
 }

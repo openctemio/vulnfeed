@@ -79,6 +79,9 @@ jobs:
       - name: Build the bundle
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+          # Read-only token of this run: a higher GitHub API rate limit for
+          # the CVE List. It reads public data only.
+          GITHUB_TOKEN: ${{ github.token }}
           MASS: ${{ inputs.allow_mass_change && '--allow-mass-change' || '' }}
         run: ./vulnfeed build --out out --root-key-id "$(cat keys/root-keyid.txt)" $PREV $MASS
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -125,6 +128,7 @@ jobs:
           Vulnerability bundle for OpenCTEM (RFC-066 §5.5): a signed snapshot and the delta from the previous release.
 
           This product uses data from the NVD API but is not endorsed or certified by the NVD.
+          CVE records from the CVE List of the CVE Program. CVE is a registered trademark of The MITRE Corporation.
           See NOTICE for the terms of every source.
           EOF
           gh release create "$tag" --repo "$GITHUB_REPOSITORY" --title "$tag" --notes-file notes.md out/*
