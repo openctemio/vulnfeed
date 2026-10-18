@@ -285,3 +285,26 @@ func TestStatementsNeverWidenToAllVersions(t *testing.T) {
 		t.Fatalf("open-ended: %+v", r.Ranges)
 	}
 }
+
+// The "other" metric's content is free-form: a numeric SSVC version (and
+// non-string option values) must not make the whole record undecodable.
+func TestOtherMetricVersionNumberOrString(t *testing.T) {
+	for _, c := range []struct{ version, want string }{{`"2.0.3"`, "2.0.3"}, {`2`, "2"}, {`2.0`, "2.0"}, {`{"x":1}`, ""}, {`null`, ""}} {
+		raw := `{"dataType":"CVE_RECORD","dataVersion":"5.1","cveMetadata":{"cveId":"CVE-2026-0001","state":"PUBLISHED",
+			"datePublished":"2026-01-02T00:00:00Z","dateUpdated":"2026-01-02T00:00:00Z"},
+			"containers":{"cna":{"descriptions":[{"lang":"en","value":"x"}],"affected":[{"vendor":"Example","product":"Widget","versions":[{"version":"1.0","status":"affected"}]}]},
+			"adp":[{"providerMetadata":{"shortName":"CISA-ADP"},"metrics":[{"other":{"type":"ssvc","content":{"version":` + c.version + `,
+			"options":[{"Exploitation":"none"},{"Automatable":false},{"Technical Impact":"partial"}]}}}]}]}}`
+		rec, ok, err := Decode(strings.NewReader(raw))
+		if err != nil || !ok {
+			t.Fatalf("version %s: ok %v err %v", c.version, ok, err)
+		}
+		if len(rec.ADP) != 1 || rec.ADP[0].SSVC == nil {
+			t.Fatalf("version %s: adp %+v", c.version, rec.ADP)
+		}
+		s := rec.ADP[0].SSVC
+		if s.Version != c.want || s.Exploitation != "none" || s.Automatable != "false" || s.TechnicalImpact != "partial" {
+			t.Errorf("version %s: ssvc %+v", c.version, s)
+		}
+	}
+}

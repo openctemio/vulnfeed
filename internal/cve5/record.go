@@ -178,8 +178,8 @@ type cnaJSON struct {
 		Other *struct {
 			Type    string `json:"type"`
 			Content struct {
-				Version string              `json:"version"`
-				Options []map[string]string `json:"options"`
+				Version scalar              `json:"version"`
+				Options []map[string]scalar `json:"options"`
 			} `json:"content"`
 		} `json:"other"`
 	} `json:"metrics"`
@@ -313,6 +313,31 @@ func cwes(c cnaJSON) []string {
 
 func rawField(s string) string { return model.CleanText(s, MaxRawField) }
 
+// scalar is a free-form "other" metric value: CNAs write the SSVC version
+// as a string ("2.0.3") or a number (2), so a string keeps its text, a
+// number or boolean its JSON literal, and anything else (an object, an
+// array, null) is empty rather than failing the whole record.
+type scalar string
+
+func (s *scalar) UnmarshalJSON(b []byte) error {
+	var str string
+	if err := json.Unmarshal(b, &str); err == nil {
+		*s = scalar(str)
+		return nil
+	}
+	var v any
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	switch v.(type) {
+	case float64, bool:
+		*s = scalar(strings.TrimSpace(string(b)))
+	default:
+		*s = ""
+	}
+	return nil
+}
+
 // affectedList keeps an affected list as stated, cleaned and capped.
 func affectedList(in []affectedJSON) []Affected {
 	var out []Affected
@@ -367,16 +392,16 @@ func ssvc(c cnaJSON) *SSVC {
 		if m.Other == nil || !strings.EqualFold(m.Other.Type, "ssvc") {
 			continue
 		}
-		s := &SSVC{Version: rawField(m.Other.Content.Version)}
+		s := &SSVC{Version: rawField(string(m.Other.Content.Version))}
 		for _, opt := range m.Other.Content.Options {
 			for k, val := range opt {
 				switch strings.ToLower(strings.TrimSpace(k)) {
 				case "exploitation":
-					s.Exploitation = rawField(val)
+					s.Exploitation = rawField(string(val))
 				case "automatable":
-					s.Automatable = rawField(val)
+					s.Automatable = rawField(string(val))
 				case "technical impact":
-					s.TechnicalImpact = rawField(val)
+					s.TechnicalImpact = rawField(string(val))
 				}
 			}
 		}
