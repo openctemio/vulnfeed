@@ -1,7 +1,7 @@
 # vulnfeed
 
 The vulnerability collector of [OpenCTEM](https://github.com/openctemio/openctem).
-Once a day it reads the public vulnerability sources, normalises them into
+Every hour it reads what the public vulnerability sources changed, normalises them into
 OpenCTEM's corpus model (products, vulnerabilities and affected version
 ranges), validates every record, signs the result and publishes it as a
 GitHub Release. OpenCTEM platforms never call the sources themselves: they
@@ -45,6 +45,11 @@ OpenCTEM SDK. `vulnfeed verify` checks both formats.
 A platform reads
 `https://github.com/openctemio/vulnfeed/releases/latest/download/latest.dsse.json`
 and the files of the release it names.
+
+Cadence: a release every hour. Its delta is what changed in that hour;
+a platform that applied the previous release applies only the delta, one
+that fell behind takes the snapshot. The last 72 releases (three days) are
+kept; a bundle expires 7 days after it was made.
 
 Record formats (one JSON object per line):
 
