@@ -45,12 +45,12 @@ func TestPublishedRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := map[string]bool{
-		`cpe:a:example_corp:web_server start=2.0 incl end=2.4.7`: true,
-		`cpe:a:example_corp:web_server start= end=1.9.9 incl`:    true,
-		`cpe:a:example_corp:web_server exact=3.1.0`:              true,
-		`cpe:a:example_corp:web_server start=5.0 incl end=`:      true,
-		`cpe:a:example:agent start=1.0 incl end=1.2`:             true,
-		`cpe:h:example:appliance exact=7.1`:                      true,
+		`cpe:a:example:web_server start=2.0 incl end=2.4.7`: true,
+		`cpe:a:example:web_server start= end=1.9.9 incl`:    true,
+		`cpe:a:example:web_server exact=3.1.0`:              true,
+		`cpe:a:example:web_server start=5.0 incl end=`:      true,
+		`cpe:a:example:agent start=1.0 incl end=1.2`:        true,
+		`cpe:h:example:appliance exact=7.1`:                 true,
 	}
 	got := map[string]bool{}
 	for _, r := range rec.Ranges {

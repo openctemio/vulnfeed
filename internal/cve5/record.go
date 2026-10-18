@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openctemio/vulnfeed/internal/alias"
 	"github.com/openctemio/vulnfeed/internal/model"
 	"github.com/openctemio/vulnfeed/internal/nvd"
 )
@@ -50,9 +51,6 @@ var (
 	cvssVector   = regexp.MustCompile(`^[A-Za-z0-9:/.\-_()]{1,200}$`)
 	// A commit hash given as a version: not comparable.
 	hashLike = regexp.MustCompile(`^[0-9a-f]{12,64}$`)
-	// Placeholder vendor or product names that identify nothing.
-	placeholders = map[string]bool{"n/a": true, "na": true, "n_a": true, "unknown": true, "unspecified": true,
-		"various": true, "multiple": true, "none": true, "-": true, "*": true}
 	// Version types the generic comparator orders correctly. Others (git,
 	// rpm, maven, python, ...) have their own ordering and are skipped.
 	versionTypes = map[string]bool{"": true, "custom": true, "semver": true}
@@ -581,7 +579,7 @@ func comparable(v string) bool {
 // the CPE naming convention: lower case, spaces as underscores, only
 // letters, digits and . _ - kept.
 func nameProduct(vendor, product string) (model.Product, bool) {
-	vk, pk := nameKey(vendor), nameKey(product)
+	vk, pk := alias.VendorKey(vendor), alias.ProductKey(product)
 	if vk == "" || pk == "" {
 		return model.Product{}, false
 	}
@@ -591,29 +589,6 @@ func nameProduct(vendor, product string) (model.Product, bool) {
 		return model.Product{}, false
 	}
 	return p, true
-}
-
-func nameKey(s string) string {
-	s = strings.ToLower(model.CleanText(s, 4*model.MaxFieldLen))
-	if placeholders[s] {
-		return ""
-	}
-	var b strings.Builder
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '.', r == '-':
-			b.WriteRune(r)
-		case r == '_' || r == ' ' || r == '/':
-			if b.Len() > 0 && !strings.HasSuffix(b.String(), "_") {
-				b.WriteByte('_')
-			}
-		}
-	}
-	k := strings.Trim(b.String(), "_.-")
-	if len(k) > model.MaxFieldLen || placeholders[k] {
-		return ""
-	}
-	return k
 }
 
 func pickCVSS(cna cnaJSON) (*model.CVSS, string) {

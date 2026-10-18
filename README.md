@@ -30,6 +30,9 @@ No release is published yet: the first one follows the key ceremony in
 | `snapshot-{products,vulns,ranges}.jsonl.gz` | the full corpus |
 | `delta.manifest.dsse.json`, `delta-*.jsonl.gz` | what changed since the previous sequence (each touched vulnerability with its complete new range set) |
 | `keyset.dsse.json` | the key set the manifests are signed under |
+| `aliases.manifest.dsse.json` | signed manifest of the alias dictionary: the bundle sequence it belongs to, the dictionary version (the release sequence the entries last changed in, so it only grows), the files below (SHA-256, sizes, counts) and the coverage stats |
+| `aliases.jsonl.gz` | the alias dictionary: CNA vendor/product names (and alternate CPE products) → canonical CPE product |
+| `aliases-state.jsonl.gz` | what each published CVE List record says about product identity (the learner's input, carried from release to release) |
 | `latest.v2.dsse.json` | bundle v2: signed pointer that pins the digest of each v2 manifest |
 | `snapshot.v2.manifest.dsse.json`, `delta.v2.manifest.dsse.json` | bundle v2: signed manifests listing, per record stream (`products`, `vulns`, `ranges`), the chunks with SHA-256, sizes, record counts and first and last record id |
 | `sha256-<hex>.jsonl.gz` | bundle v2 chunks: gzip JSON Lines of the same records as v1, named by their digest |
@@ -83,7 +86,9 @@ Merge precedence (`internal/collect/merge.go`):
 
 A CVE's ranges come from one source, never a mix. CNA affected data becomes
 ranges only where it is comparable: an `affected` statement with a CPE, or a
-vendor and product name (written in the CPE naming convention), and a
+vendor and product name (written in the CPE naming convention, legal-form
+words such as "Inc." or "Corporation" and parenthesised qualifiers dropped;
+see the alias dictionary below), and a
 version, `lessThan` or `lessThanOrEqual` bound of type semver, custom or
 none. Statements with status changes, other version orderings (git, rpm,
 maven, ...), commit hashes, packages (`packageName`) and placeholder names
@@ -106,6 +111,51 @@ then. OSV (package ecosystems) needs package (purl) products and ecosystem
 version schemes in that format and is not collected yet.
 
 Terms and attribution: `NOTICE`.
+
+## Alias dictionary
+
+Most new CVE records carry no CPE: they name the product only by the CNA's
+vendor and product strings, which often differ from the CPE names platforms
+see ("Google Inc." / "Chrome", "Linux" / "Linux" for the kernel). The alias
+dictionary (`internal/alias`, OpenCTEM RFC-066 §5.6) maps those names to
+the canonical CPE product:
+
+| Basis | Rule |
+|---|---|
+| `curated` | a reviewed entry in `internal/alias/curated.tsv`; never overridden |
+| `learned` | the name and one CPE product appear for the same affected item (its own CPEs, the ADP's CPEs for it, or the only NVD product of a CVE with one unnamed CNA product) in at least 3 CVEs, with at least 90% agreement |
+| `part` | the same vendor:product is a known CPE product under another part (operating system, hardware) |
+| `variant` | the product name without the vendor's name in front ("Microsoft Edge") or without a generic trailing word ("NX-OS Software") is a known CPE product of the same (or mapped) vendor |
+| `vendor` | the CNA vendor maps to a CPE vendor (curated, or learned from at least 5 CVEs at 90%) and vendor:product is a known CPE product |
+
+Every build learns from the CVE List records it reads (kept per CVE in
+`aliases-state.jsonl.gz`, so a record read again replaces its evidence),
+rewrites the CVE List ranges of a mapped name to the canonical product, and
+publishes the entries with a version that grows whenever they change. A name
+nothing resolves keeps its name-derived product (the CVE is published, and
+matches once a later dictionary resolves it) and is listed in the stats.
+Coverage, in the stats and the build log, is the share of published CVE List
+records that name a CPE product or a resolved name, or name no product at
+all (placeholders such as "n/a", or only a package name): the target is 95%.
+The stats also count, among the unresolved, the CVEs whose vendor no CPE
+product uses at all (`new_vendor`: no CPE identity exists to resolve to).
+
+Measured on a full first build (2026-10-18: 391,285 published CVE List
+records, NVD and the CVE List baseline): 7,520 entries; coverage 90.7%
+(96.3% counting `new_vendor`); 17,001 CVEs that name their product only by
+CNA strings resolve to a CPE product through an entry. For CVEs of 2026
+alone: 74,906 published, 12,004 resolve through an entry, coverage 79.1%
+(91.9% counting `new_vendor`). The most frequent unresolved names are
+combined product lists and products no CPE names yet; they are the input for
+curated entries.
+
+The inputs are public advisory text: names are sanitised and normalised,
+malformed CPE values dropped, every learned mapping needs repeated agreeing
+evidence, curated entries win, no learned entry is made for a name that is
+itself a known CPE product (only a curated entry can repoint one), and the
+dictionary is signed with the bundle keys and bound to the release sequence.
+Each entry carries its basis: a platform lets only `curated` entries fold a
+product that has data of its own and holds the rest for review.
 
 ## Verifying a bundle yourself
 

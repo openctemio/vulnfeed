@@ -445,10 +445,11 @@ func Sign(dir string, priv ed25519.PrivateKey, keyset []byte, pinnedRoot string,
 		{"snapshot.manifest.json", fmt.Sprintf(ManifestFile, KindSnapshot), ManifestPayloadType},
 		{"delta.manifest.json", fmt.Sprintf(ManifestFile, KindDelta), ManifestPayloadType},
 		{"latest.json", LatestFile, LatestPayloadType},
+		{unsignedAliasesManifest, AliasesManifestFile, AliasesManifestPayloadType},
 	}
 	for _, p := range pairs {
 		payload, err := os.ReadFile(filepath.Join(dir, p.in))
-		if errors.Is(err, os.ErrNotExist) && p.in == "delta.manifest.json" {
+		if errors.Is(err, os.ErrNotExist) && (p.in == "delta.manifest.json" || p.in == unsignedAliasesManifest) {
 			continue
 		}
 		if err != nil {
