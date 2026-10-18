@@ -61,8 +61,37 @@ run on.
 
 ## Sources
 
-P0: the NVD CVE API 2.0. Planned: OSV (package ecosystems and GitHub
-advisories), CVE List v5, CISA KEV and EPSS. Terms and attribution: `NOTICE`.
+| Source | What it gives | How it is read |
+|---|---|---|
+| NVD CVE API 2.0 | CVE records, CPE configurations (ranges with source `nvd`), scores | CVEs modified since the previous build, in windows of at most 120 days |
+| CVE List (CVE JSON 5.x, `CVEProject/cvelistV5`) | the CNA's record: state (published or rejected), description, dates, CNA score (CVSS 4.0, 3.1, 3.0), CWEs, affected products and versions (ranges with source `cve5`) | records changed by commits since the previous build, each checked against its git blob id; the first build, or a window with more changes than an incremental read takes, reads the daily baseline archive (checked against its published SHA-256) and the changes since |
+
+Merge precedence (`internal/collect/merge.go`):
+
+| Field | Winner |
+|---|---|
+| state | rejected when either source says so; a CVE List record published again restores the CVE |
+| description, published date | the CVE List (the CNA's own text); NVD's copy when the CVE List record was not read in that build |
+| modified | the later of the two |
+| score, severity, CWEs | NVD when it has them; the CNA's only fill a CVE NVD has none for |
+| affected ranges | NVD's CPE configurations whenever NVD has any for the CVE; the CNA's affected data only for a CVE without them |
+
+A CVE's ranges come from one source, never a mix. CNA affected data becomes
+ranges only where it is comparable: an `affected` statement with a CPE, or a
+vendor and product name (written in the CPE naming convention), and a
+version, `lessThan` or `lessThanOrEqual` bound of type semver, custom or
+none. Statements with status changes, other version orderings (git, rpm,
+maven, ...), commit hashes, packages (`packageName`) and placeholder names
+are dropped, never widened to "all versions".
+
+The CVE List record's references are read and cleaned but not yet carried:
+the record format is decoded strictly by platforms, so new fields (references,
+package products, advisory aliases, KEV and EPSS) come with the next record
+format version. CISA KEV and EPSS are synced by the platform itself until
+then. OSV (package ecosystems) needs package (purl) products and ecosystem
+version schemes in that format and is not collected yet.
+
+Terms and attribution: `NOTICE`.
 
 ## Verifying a bundle yourself
 
@@ -82,6 +111,9 @@ go test ./...
 go build -o vulnfeed ./cmd/vulnfeed
 ./vulnfeed build --out out --trial-since 24h     # a trial: CVEs modified in the last day
 ```
+
+`GITHUB_TOKEN` (any token, no scopes needed) raises the GitHub API rate
+limit for the CVE List; `--cve-list=false` builds from NVD alone.
 
 A key is needed only to sign; see `keys/README.md`.
 

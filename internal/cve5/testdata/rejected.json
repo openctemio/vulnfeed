@@ -1,0 +1,25 @@
+{
+ "dataType": "CVE_RECORD",
+ "dataVersion": "5.1",
+ "cveMetadata": {
+  "cveId": "CVE-2026-10001",
+  "assignerOrgId": "00000000-0000-4000-8000-000000000000",
+  "state": "REJECTED",
+  "dateReserved": "2026-09-01T00:00:00.000Z",
+  "dateRejected": "2026-10-06T00:00:00.000Z",
+  "dateUpdated": "2026-10-06T00:00:00.000Z"
+ },
+ "containers": {
+  "cna": {
+   "providerMetadata": {
+    "orgId": "00000000-0000-4000-8000-000000000000"
+   },
+   "rejectedReasons": [
+    {
+     "lang": "en",
+     "value": "ConsultIDs: none. Reason: This candidate was withdrawn by its CNA."
+    }
+   ]
+  }
+ }
+}

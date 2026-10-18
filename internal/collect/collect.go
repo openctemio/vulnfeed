@@ -4,10 +4,12 @@ package collect
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/openctemio/vulnfeed/internal/bundle"
+	"github.com/openctemio/vulnfeed/internal/cve5"
 	"github.com/openctemio/vulnfeed/internal/nvd"
 )
 
@@ -16,6 +18,12 @@ var nvdSource = bundle.Source{
 	Name:        "nvd",
 	Terms:       "https://nvd.nist.gov/developers/terms-of-use",
 	Attribution: "This product uses data from the NVD API but is not endorsed or certified by the NVD.",
+}
+
+var cve5Source = bundle.Source{
+	Name:        "cve5",
+	Terms:       "https://www.cve.org/Legal/TermsOfUse",
+	Attribution: "CVE records from the CVE List of the CVE Program. CVE is a registered trademark of The MITRE Corporation.",
 }
 
 // Guard against a source that suddenly withdraws data.
@@ -30,6 +38,12 @@ type Pager interface {
 	FetchPage(ctx context.Context, q nvd.Query) (*nvd.Page, error)
 }
 
+// CVEList reads the CVE List; *cve5.Client implements it.
+type CVEList interface {
+	Changed(ctx context.Context, from, to time.Time, fn func(cve5.Record)) error
+	Baseline(ctx context.Context, fn func(cve5.Record)) (time.Time, error)
+}
+
 // Options of a build.
 type Options struct {
 	Now time.Time
@@ -39,7 +53,10 @@ type Options struct {
 	// Since limits a first build to CVEs modified after it (a trial run;
 	// a published first build reads the whole corpus).
 	Since time.Time
-	Log   func(format string, args ...any)
+	// CVEList, when set, is read after NVD (see merge.go for the
+	// precedence between the two).
+	CVEList CVEList
+	Log     func(format string, args ...any)
 }
 
 // Build returns the next snapshot. prev may be nil (first build).
@@ -88,6 +105,27 @@ func Build(ctx context.Context, prev *bundle.Snapshot, pager Pager, opt Options)
 	src := nvdSource
 	src.AsOf = started
 	next.Sources = []bundle.Source{src}
+	if opt.CVEList != nil {
+		var cveSince time.Time
+		if prev != nil {
+			cveSince = prev.SourceAsOf("cve5")
+		} else {
+			cveSince = opt.Since
+		}
+		if err := readCVEList(ctx, next, opt.CVEList, cveSince, started, opt.Log); err != nil {
+			return nil, err
+		}
+		cs := cve5Source
+		cs.AsOf = started
+		next.Sources = append(next.Sources, cs)
+	} else if prev != nil {
+		// A build without the CVE List keeps its cursor for the next one.
+		for _, s := range prev.Sources {
+			if s.Name == "cve5" {
+				next.Sources = append(next.Sources, s)
+			}
+		}
+	}
 	if prev != nil && !opt.AllowMassChange {
 		_, _, removed := bundle.Changed(prev, next)
 		total := 0
@@ -105,6 +143,28 @@ func Build(ctx context.Context, prev *bundle.Snapshot, pager Pager, opt Options)
 	return next, next.Validate()
 }
 
+// readCVEList applies the CVE List records changed since the cursor; with
+// no cursor (the source's first build), or more changes than an
+// incremental read takes, it reads the daily baseline and the changes
+// since it.
+func readCVEList(ctx context.Context, s *bundle.Snapshot, src CVEList, since, until time.Time, log func(string, ...any)) error {
+	apply := func(r cve5.Record) { applyCVE5(s, r) }
+	if !since.IsZero() {
+		err := src.Changed(ctx, since.Add(-cursorOverlap), until, apply)
+		if !errors.Is(err, cve5.ErrTooManyChanges) {
+			return err
+		}
+		if log != nil {
+			log("cve5: %v; reading the baseline", err)
+		}
+	}
+	asOf, err := src.Baseline(ctx, apply)
+	if err != nil {
+		return err
+	}
+	return src.Changed(ctx, asOf.Add(-cursorOverlap), until, apply)
+}
+
 func pages(ctx context.Context, pager Pager, q nvd.Query, apply func(*nvd.Page), log func(string, ...any)) error {
 	for start := 0; ; {
 		q.StartIndex = start
@@ -120,26 +180,5 @@ func pages(ctx context.Context, pager Pager, q nvd.Query, apply func(*nvd.Page),
 		if p.Count == 0 || start >= p.TotalResults {
 			return nil
 		}
-	}
-}
-
-// applyRecord folds one converted CVE into the snapshot: a CVE with ranges
-// (or already in the snapshot) gets its record and complete range set; a
-// rejected CVE keeps its record without ranges; a CVE with more statements
-// than a bundle carries keeps its previous ranges.
-func applyRecord(s *bundle.Snapshot, rec nvd.Record) {
-	_, known := s.Vulns[rec.Vuln.ID]
-	switch {
-	case rec.Rejected:
-		if known {
-			s.SetVuln(rec.Vuln, nil, nil)
-		}
-	case rec.TooManyRanges:
-		if known {
-			s.SetVuln(rec.Vuln, s.Ranges[rec.Vuln.ID], nil)
-		}
-	case len(rec.Ranges) == 0 && !known:
-	default:
-		s.SetVuln(rec.Vuln, rec.Ranges, rec.Products)
 	}
 }

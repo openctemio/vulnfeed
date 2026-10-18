@@ -29,7 +29,7 @@ var (
 	vectorRE   = regexp.MustCompile(`^[A-Za-z0-9:/.\-_()]{1,200}$`)
 	severities = map[string]bool{"none": true, "low": true, "medium": true, "high": true, "critical": true}
 	schemes    = map[string]bool{"generic": true}
-	sources    = map[string]bool{"nvd": true}
+	sources    = map[string]bool{"nvd": true, "cve5": true}
 )
 
 // Product is a public product named by the bundle.
