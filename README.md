@@ -84,7 +84,12 @@ none. Statements with status changes, other version orderings (git, rpm,
 maven, ...), commit hashes, packages (`packageName`) and placeholder names
 are dropped, never widened to "all versions".
 
-The CVE List record's references are read and cleaned but not yet carried:
+Beyond what becomes ranges, each CVE List record keeps, cleaned and capped,
+its references, the CNA's complete affected list (vendor, product, package
+name and collection URL, CPEs, platforms, default status, every version
+statement with its type, bounds and status changes) and its ADP containers
+(score, CWEs, affected items with CPEs, SSVC decision points), in
+`cve5.Record` (`References`, `Affected`, `ADP`). They are not yet carried:
 the record format is decoded strictly by platforms, so new fields (references,
 package products, advisory aliases, KEV and EPSS) come with the next record
 format version. CISA KEV and EPSS are synced by the platform itself until

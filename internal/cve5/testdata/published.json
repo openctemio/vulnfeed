@@ -192,6 +192,73 @@
      "url": "ftp://example.com/x"
     }
    ]
-  }
+  },
+  "adp": [
+   {
+    "providerMetadata": {
+     "orgId": "134c704f-9b21-4f2e-91b3-4a467353bcc0",
+     "shortName": "CISA-ADP"
+    },
+    "title": "CISA ADP Vulnrichment",
+    "metrics": [
+     {
+      "other": {
+       "type": "ssvc",
+       "content": {
+        "version": "2.0.3",
+        "options": [
+         {
+          "Exploitation": "poc"
+         },
+         {
+          "Automatable": "yes"
+         },
+         {
+          "Technical Impact": "total"
+         }
+        ]
+       }
+      }
+     },
+     {
+      "cvssV3_1": {
+       "version": "3.1",
+       "baseScore": 8.8,
+       "baseSeverity": "HIGH",
+       "vectorString": "CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"
+      }
+     }
+    ],
+    "problemTypes": [
+     {
+      "descriptions": [
+       {
+        "lang": "en",
+        "type": "CWE",
+        "cweId": "CWE-787"
+       }
+      ]
+     }
+    ],
+    "affected": [
+     {
+      "vendor": "example_corp",
+      "product": "web_server",
+      "cpes": [
+       "cpe:2.3:a:example_corp:web_server:*:*:*:*:*:*:*:*"
+      ],
+      "defaultStatus": "unknown",
+      "versions": [
+       {
+        "version": "2.0",
+        "status": "affected",
+        "lessThan": "2.4.7",
+        "versionType": "semver"
+       }
+      ]
+     }
+    ]
+   }
+  ]
  }
 }

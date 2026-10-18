@@ -33,6 +33,9 @@ const (
 	MaxReferenceName   = 200
 	MaxTags            = 16
 	MaxTagLen          = 64
+	MaxADP             = 16
+	MaxRawField        = 256
+	MaxChanges         = 64
 )
 
 // States of a CVE record, as carried in the bundle's status field.
@@ -67,13 +70,69 @@ type Reference struct {
 	Tags []string
 }
 
+// Affected is one affected item as its container states it, cleaned and
+// capped but not interpreted: every field is kept, including statements
+// that do not become ranges (packages, other version orderings, status
+// changes, default status). It is the input for product identity work
+// (aliases, package products) that the bundle format does not carry yet.
+type Affected struct {
+	Vendor        string
+	Product       string
+	PackageName   string
+	CollectionURL string
+	DefaultStatus string
+	CPEs          []string
+	Platforms     []string
+	Versions      []Version
+}
+
+// Version is one version statement of an affected item.
+type Version struct {
+	Version         string
+	Status          string
+	VersionType     string
+	LessThan        string
+	LessThanOrEqual string
+	Changes         []Change
+}
+
+// Change is a status change at a version inside a version statement.
+type Change struct {
+	At     string
+	Status string
+}
+
+// ADP is one Authorized Data Publisher container (for example the CISA
+// ADP enrichment): its score, CWEs, affected items (with their CPEs) and
+// SSVC decision points. Kept apart from the CNA's data; not carried in the
+// bundle format yet.
+type ADP struct {
+	ShortName string
+	CVSS      *model.CVSS
+	Severity  string
+	CWEs      []string
+	Affected  []Affected
+	SSVC      *SSVC
+}
+
+// SSVC holds the SSVC decision points an ADP publishes.
+type SSVC struct {
+	Version         string
+	Exploitation    string
+	Automatable     string
+	TechnicalImpact string
+}
+
 // Record is one converted CVE record.
 type Record struct {
 	Vuln       model.Vuln
 	Ranges     []model.Range
 	Products   map[string]model.Product
 	References []Reference
-	Rejected   bool
+	// Affected is the CNA's affected list in full; ADP the ADP containers.
+	Affected []Affected
+	ADP      []ADP
+	Rejected bool
 	// TooManyRanges: more statements than a bundle carries; the record is
 	// kept with its previous ranges.
 	TooManyRanges bool
@@ -90,7 +149,8 @@ type cveJSON struct {
 		DateRejected  string `json:"dateRejected"`
 	} `json:"cveMetadata"`
 	Containers struct {
-		CNA cnaJSON `json:"cna"`
+		CNA cnaJSON   `json:"cna"`
+		ADP []cnaJSON `json:"adp"`
 	} `json:"containers"`
 }
 
@@ -100,6 +160,9 @@ type langValue struct {
 }
 
 type cnaJSON struct {
+	ProviderMetadata struct {
+		ShortName string `json:"shortName"`
+	} `json:"providerMetadata"`
 	Descriptions    []langValue    `json:"descriptions"`
 	RejectedReasons []langValue    `json:"rejectedReasons"`
 	Affected        []affectedJSON `json:"affected"`
@@ -109,9 +172,16 @@ type cnaJSON struct {
 		} `json:"descriptions"`
 	} `json:"problemTypes"`
 	Metrics []struct {
-		V40 *metricJSON `json:"cvssV4_0"`
-		V31 *metricJSON `json:"cvssV3_1"`
-		V30 *metricJSON `json:"cvssV3_0"`
+		V40   *metricJSON `json:"cvssV4_0"`
+		V31   *metricJSON `json:"cvssV3_1"`
+		V30   *metricJSON `json:"cvssV3_0"`
+		Other *struct {
+			Type    string `json:"type"`
+			Content struct {
+				Version string              `json:"version"`
+				Options []map[string]string `json:"options"`
+			} `json:"content"`
+		} `json:"other"`
 	} `json:"metrics"`
 	References []struct {
 		URL  string   `json:"url"`
@@ -131,18 +201,23 @@ type affectedJSON struct {
 	Vendor        string        `json:"vendor"`
 	Product       string        `json:"product"`
 	PackageName   string        `json:"packageName"`
+	CollectionURL string        `json:"collectionURL"`
 	CPEs          []string      `json:"cpes"`
+	Platforms     []string      `json:"platforms"`
 	DefaultStatus string        `json:"defaultStatus"`
 	Versions      []versionJSON `json:"versions"`
 }
 
 type versionJSON struct {
-	Version         string            `json:"version"`
-	Status          string            `json:"status"`
-	VersionType     string            `json:"versionType"`
-	LessThan        string            `json:"lessThan"`
-	LessThanOrEqual string            `json:"lessThanOrEqual"`
-	Changes         []json.RawMessage `json:"changes"`
+	Version         string `json:"version"`
+	Status          string `json:"status"`
+	VersionType     string `json:"versionType"`
+	LessThan        string `json:"lessThan"`
+	LessThanOrEqual string `json:"lessThanOrEqual"`
+	Changes         []struct {
+		At     string `json:"at"`
+		Status string `json:"status"`
+	} `json:"changes"`
 }
 
 // Decode reads one record of at most MaxRecordBytes from r and converts
@@ -196,16 +271,18 @@ func Convert(c cveJSON) (Record, bool, error) {
 		return rec, true, nil
 	}
 	v.CVSS, v.Severity = pickCVSS(cna)
-	seen := map[string]bool{}
-	for _, p := range cna.ProblemTypes {
-		for _, d := range p.Descriptions {
-			if w := strings.TrimSpace(d.CWEID); cwePattern.MatchString(w) && !seen[w] && len(v.CWEs) < model.MaxCWEs {
-				seen[w] = true
-				v.CWEs = append(v.CWEs, w)
-			}
-		}
-	}
+	v.CWEs = cwes(cna)
 	rec.References = references(cna)
+	rec.Affected = affectedList(cna.Affected)
+	for i, a := range c.Containers.ADP {
+		if i >= MaxADP {
+			break
+		}
+		adp := ADP{ShortName: model.CleanText(a.ProviderMetadata.ShortName, MaxRawField), CWEs: cwes(a),
+			Affected: affectedList(a.Affected), SSVC: ssvc(a)}
+		adp.CVSS, adp.Severity = pickCVSS(a)
+		rec.ADP = append(rec.ADP, adp)
+	}
 	for i, a := range cna.Affected {
 		if i >= MaxAffected {
 			break
@@ -218,6 +295,94 @@ func Convert(c cveJSON) (Record, bool, error) {
 		}
 	}
 	return rec, true, nil
+}
+
+func cwes(c cnaJSON) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, p := range c.ProblemTypes {
+		for _, d := range p.Descriptions {
+			if w := strings.TrimSpace(d.CWEID); cwePattern.MatchString(w) && !seen[w] && len(out) < model.MaxCWEs {
+				seen[w] = true
+				out = append(out, w)
+			}
+		}
+	}
+	return out
+}
+
+func rawField(s string) string { return model.CleanText(s, MaxRawField) }
+
+// affectedList keeps an affected list as stated, cleaned and capped.
+func affectedList(in []affectedJSON) []Affected {
+	var out []Affected
+	for i, a := range in {
+		if i >= MaxAffected {
+			break
+		}
+		x := Affected{Vendor: rawField(a.Vendor), Product: rawField(a.Product), PackageName: rawField(a.PackageName),
+			DefaultStatus: rawField(a.DefaultStatus)}
+		if u, err := url.Parse(strings.TrimSpace(a.CollectionURL)); err == nil && (u.Scheme == "https" || u.Scheme == "http") &&
+			u.Host != "" && u.User == nil && len(a.CollectionURL) <= MaxReferenceURL {
+			x.CollectionURL = u.String()
+		}
+		for j, c := range a.CPEs {
+			if j >= MaxCPEsPerItem {
+				break
+			}
+			if c = strings.TrimSpace(c); c != "" && len(c) <= nvd.MaxCPELen && model.Sanitize(c) == c {
+				x.CPEs = append(x.CPEs, c)
+			}
+		}
+		for j, p := range a.Platforms {
+			if j >= MaxTags {
+				break
+			}
+			if p = rawField(p); p != "" {
+				x.Platforms = append(x.Platforms, p)
+			}
+		}
+		for j, v := range a.Versions {
+			if j >= MaxVersionsPerItem {
+				break
+			}
+			y := Version{Version: rawField(v.Version), Status: rawField(v.Status), VersionType: rawField(v.VersionType),
+				LessThan: rawField(v.LessThan), LessThanOrEqual: rawField(v.LessThanOrEqual)}
+			for k, ch := range v.Changes {
+				if k >= MaxChanges {
+					break
+				}
+				y.Changes = append(y.Changes, Change{At: rawField(ch.At), Status: rawField(ch.Status)})
+			}
+			x.Versions = append(x.Versions, y)
+		}
+		out = append(out, x)
+	}
+	return out
+}
+
+// ssvc reads the SSVC decision points of a container's metrics.
+func ssvc(c cnaJSON) *SSVC {
+	for _, m := range c.Metrics {
+		if m.Other == nil || !strings.EqualFold(m.Other.Type, "ssvc") {
+			continue
+		}
+		s := &SSVC{Version: rawField(m.Other.Content.Version)}
+		for _, opt := range m.Other.Content.Options {
+			for k, val := range opt {
+				switch strings.ToLower(strings.TrimSpace(k)) {
+				case "exploitation":
+					s.Exploitation = rawField(val)
+				case "automatable":
+					s.Automatable = rawField(val)
+				case "technical impact":
+					s.TechnicalImpact = rawField(val)
+				}
+			}
+		}
+		return s
+	}
+	return nil
 }
 
 func english(vals []langValue) string {

@@ -85,6 +85,49 @@ func TestPublishedRecord(t *testing.T) {
 	}
 }
 
+// The CNA's affected list and the ADP containers are kept in full, not
+// only what becomes a range.
+func TestAffectedAndADPKept(t *testing.T) {
+	rec := load(t, "published.json")
+	if len(rec.Affected) != 5 {
+		t.Fatalf("affected %d", len(rec.Affected))
+	}
+	ws := rec.Affected[0]
+	if ws.Vendor != "Example Corp" || ws.Product != "Web Server" || ws.DefaultStatus != "unaffected" || len(ws.Versions) != 10 {
+		t.Fatalf("web server %+v", ws)
+	}
+	if v := ws.Versions[7]; len(v.Changes) != 1 || v.Changes[0].At != "4.1" || v.Changes[0].Status != "unaffected" {
+		t.Fatalf("changes %+v", v)
+	}
+	if v := ws.Versions[5]; v.VersionType != "git" || v.LessThan != "1.5" {
+		t.Fatalf("git statement %+v", v)
+	}
+	pkg := rec.Affected[4]
+	if pkg.PackageName != "left-pad" || pkg.CollectionURL != "https://registry.npmjs.org" {
+		t.Fatalf("package %+v", pkg)
+	}
+	if len(rec.Affected[1].CPEs) != 2 {
+		t.Fatalf("cpes %+v", rec.Affected[1].CPEs)
+	}
+	if len(rec.ADP) != 1 {
+		t.Fatalf("adp %+v", rec.ADP)
+	}
+	a := rec.ADP[0]
+	if a.ShortName != "CISA-ADP" || a.CVSS == nil || a.CVSS.Score != 8.8 || a.Severity != "high" || a.CWEs[0] != "CWE-787" {
+		t.Fatalf("adp %+v", a)
+	}
+	if a.SSVC == nil || a.SSVC.Exploitation != "poc" || a.SSVC.Automatable != "yes" || a.SSVC.TechnicalImpact != "total" {
+		t.Fatalf("ssvc %+v", a.SSVC)
+	}
+	if len(a.Affected) != 1 || a.Affected[0].CPEs[0] != "cpe:2.3:a:example_corp:web_server:*:*:*:*:*:*:*:*" {
+		t.Fatalf("adp affected %+v", a.Affected)
+	}
+	// ADP data does not change the CNA's fields.
+	if rec.Vuln.CVSS.Score != 9.3 || rec.Vuln.CWEs[0] != "CWE-122" {
+		t.Fatalf("CNA fields overwritten: %+v", rec.Vuln)
+	}
+}
+
 func describe(r model.Range) string {
 	if r.Exact != "" {
 		return r.Product + " exact=" + r.Exact
