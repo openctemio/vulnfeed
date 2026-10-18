@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/openctemio/vulnfeed/internal/alias"
 	"github.com/openctemio/vulnfeed/internal/bundle"
 	"github.com/openctemio/vulnfeed/internal/collect"
 	"github.com/openctemio/vulnfeed/internal/cve5"
@@ -77,6 +78,8 @@ func cmdBuild(ctx context.Context, args []string) error {
 	}
 	now := time.Now().UTC()
 	var prev *bundle.Snapshot
+	var prevAliases *bundle.AliasManifest
+	state := map[string]alias.Obs{}
 	if *prevDir != "" {
 		v, err := bundle.VerifyDir(*prevDir, bundle.VerifyOptions{PinnedRoot: *root, Now: now, AllowExpired: true, SkipRecordChk: true})
 		if err != nil {
@@ -86,8 +89,17 @@ func cmdBuild(ctx context.Context, args []string) error {
 			return fmt.Errorf("previous release: %w", err)
 		}
 		logf("previous release: sequence %d, %d vulnerabilities", prev.Sequence, len(prev.Vulns))
+		if prevAliases, err = bundle.VerifyAliases(*prevDir, v.KeySet, v.Latest.Sequence); err != nil {
+			return fmt.Errorf("previous release: %w", err)
+		}
+		if prevAliases == nil {
+			logf("previous release has no alias dictionary: its learner state starts empty (a CVE List baseline read fills it)")
+		} else if state, err = bundle.ReadAliasState(*prevDir, prevAliases); err != nil {
+			return fmt.Errorf("previous release: %w", err)
+		}
 	}
-	opt := collect.Options{Now: now, AllowMassChange: *mass, Since: sinceOf(now, *trial), NVDMinInterval: *nvdEvery, Log: logf}
+	opt := collect.Options{Now: now, AllowMassChange: *mass, Since: sinceOf(now, *trial), NVDMinInterval: *nvdEvery,
+		AliasState: state, Log: logf}
 	if *cveList {
 		c := cve5.NewClient(os.Getenv("GITHUB_TOKEN"))
 		c.Log = logf
@@ -97,12 +109,25 @@ func cmdBuild(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	entries, stats, err := collect.Aliases(next, state)
+	if err != nil {
+		return err
+	}
+	if err := next.Validate(); err != nil {
+		return err
+	}
 	snap, delta, _, err := bundle.Write(*out, prev, next, bundle.WriteOptions{Now: now,
 		Collector: bundle.Collector{Version: version, Commit: os.Getenv("GITHUB_SHA")}})
 	if err != nil {
 		return err
 	}
+	am, err := bundle.WriteAliases(*out, next.Sequence, prevAliases, entries, state, stats, now)
+	if err != nil {
+		return err
+	}
 	logf("built sequence %d: %d vulnerabilities, %d ranges, %d products", snap.Sequence, snap.Stats.Vulns, snap.Stats.Ranges, snap.Stats.Products)
+	logf("alias dictionary v%d: %d entries; %d published CVEs read: %d resolved (%d by CNA names, %d of them through an entry), %d unresolvable, %d unresolved; coverage %.1f%%",
+		am.Version, len(entries), stats.Published, stats.Resolved, stats.ResolvedByName, stats.ResolvedByEntry, stats.Unresolvable, stats.Unresolved, 100*stats.Coverage)
 	if delta != nil {
 		logf("delta from %d: %d vulnerabilities, +%d -%d ranges", delta.BaseSequence, delta.Stats.Vulns, delta.Stats.RangesAdded, delta.Stats.RangesRemoved)
 	}
@@ -146,6 +171,19 @@ func cmdVerify(args []string) error {
 			return err
 		}
 		logf("verified bundle v2 (sequence %d)", v.Latest.Sequence)
+	}
+	am, err := bundle.VerifyAliases(*dir, v.KeySet, v.Latest.Sequence)
+	if err != nil {
+		return err
+	}
+	if am != nil {
+		if _, err := bundle.ReadAliasEntries(*dir, am); err != nil {
+			return err
+		}
+		if _, err := bundle.ReadAliasState(*dir, am); err != nil {
+			return err
+		}
+		logf("verified alias dictionary v%d (%d entries, coverage %.1f%%)", am.Version, am.Files[0].Records, 100*am.Stats.Coverage)
 	}
 	logf("verified sequence %d (snapshot %d vulnerabilities, %d ranges; key set v%d)", v.Latest.Sequence,
 		v.Snapshot.Stats.Vulns, v.Snapshot.Stats.Ranges, v.KeySet.Version)

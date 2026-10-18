@@ -1,0 +1,26 @@
+# Reviewed alias overrides (changes go through a reviewed pull request).
+#
+#   cpe     <name or CPE key>   <canonical CPE product>    a CNA name (in the
+#           CPE naming convention, part "a") or an alternate CPE product is
+#           the canonical product
+#   vendor  <CNA vendor key>    <CPE vendor>               a CNA vendor name
+#           is this CPE vendor (used only where vendor:product is a known
+#           CPE product)
+#
+# Keys are lower case, in the CPE naming convention. Learned mappings never
+# override an entry here. Seeded from the platform's curated product list.
+
+cpe     a:nginx:nginx                         a:f5:nginx
+cpe     a:igor_sysoev:nginx                   a:f5:nginx
+cpe     a:microsoft:iis                       a:microsoft:internet_information_services
+cpe     a:mortbay:jetty                       a:eclipse:jetty
+cpe     a:mysql:mysql                         a:oracle:mysql
+cpe     a:atlassian:confluence                a:atlassian:confluence_server
+cpe     a:atlassian:confluence_data_center    a:atlassian:confluence_server
+cpe     a:atlassian:jira_server               a:atlassian:jira
+cpe     a:atlassian:jira_data_center          a:atlassian:jira
+# The kernel CNA names the product "Linux" by vendor "Linux".
+cpe     a:linux:linux                         o:linux:linux_kernel
+
+vendor  the_apache_software_foundation        apache
+vendor  apache_software_foundation            apache

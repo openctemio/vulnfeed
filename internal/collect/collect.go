@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/openctemio/vulnfeed/internal/alias"
 	"github.com/openctemio/vulnfeed/internal/bundle"
 	"github.com/openctemio/vulnfeed/internal/cve5"
 	"github.com/openctemio/vulnfeed/internal/nvd"
@@ -64,7 +65,10 @@ type Options struct {
 	// the previous NVD read (its cursor is kept), so an hourly build asks
 	// NVD for changes at the cadence NVD asks clients to keep.
 	NVDMinInterval time.Duration
-	Log            func(format string, args ...any)
+	// AliasState, when set, receives what each CVE List record read says
+	// about product identity (the alias dictionary's learner state).
+	AliasState map[string]alias.Obs
+	Log        func(format string, args ...any)
 }
 
 // Build returns the next snapshot. prev may be nil (first build).
@@ -128,7 +132,7 @@ func Build(ctx context.Context, prev *bundle.Snapshot, pager Pager, opt Options)
 		} else {
 			cveSince = opt.Since
 		}
-		if err := readCVEList(ctx, next, opt.CVEList, cveSince, started, opt.Log); err != nil {
+		if err := readCVEList(ctx, next, opt.CVEList, cveSince, started, opt.AliasState, opt.Log); err != nil {
 			return nil, err
 		}
 		cs := cve5Source
@@ -163,8 +167,14 @@ func Build(ctx context.Context, prev *bundle.Snapshot, pager Pager, opt Options)
 // no cursor (the source's first build), or more changes than an
 // incremental read takes, it reads the daily baseline and the changes
 // since it.
-func readCVEList(ctx context.Context, s *bundle.Snapshot, src CVEList, since, until time.Time, log func(string, ...any)) error {
-	apply := func(r cve5.Record) { applyCVE5(s, r) }
+func readCVEList(ctx context.Context, s *bundle.Snapshot, src CVEList, since, until time.Time,
+	state map[string]alias.Obs, log func(string, ...any)) error {
+	apply := func(r cve5.Record) {
+		applyCVE5(s, r)
+		if state != nil {
+			observe(state, s, r)
+		}
+	}
 	if !since.IsZero() {
 		err := src.Changed(ctx, since.Add(-cursorOverlap), until, apply)
 		if !errors.Is(err, cve5.ErrTooManyChanges) {
