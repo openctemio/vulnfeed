@@ -1,7 +1,11 @@
 name: Publish bundle
 
-# Daily: build the next vulnerability bundle from the previous release and
-# the sources, sign it, verify it and publish it as a GitHub Release.
+# Hourly: build the next vulnerability bundle from the previous release and
+# what the sources changed since, sign it, verify it and publish it as a
+# GitHub Release. Every release carries the full snapshot (a platform that
+# fell behind takes it) and the delta from the previous release (a platform
+# that applied the previous one takes only that). The hourly runs skip the
+# test suite, which runs on every push and in the daily run.
 #
 # Two jobs on purpose. "build" talks to the sources and never sees the
 # signing key. "publish" runs in the protected "publish" environment (only
@@ -10,7 +14,8 @@ name: Publish bundle
 
 on:
   schedule:
-    - cron: "17 2 * * *"
+    - cron: "17 2 * * *" # daily: tests too
+    - cron: "17 0,1,3-23 * * *" # hourly
   workflow_dispatch:
     inputs:
       allow_mass_change:
@@ -64,6 +69,7 @@ jobs:
           go-version-file: go.mod
           cache: false
       - name: Test
+        if: github.event_name != 'schedule' || github.event.schedule == '17 2 * * *'
         run: go test ./...
       - name: Build the CLI
         run: go build -trimpath -ldflags "-X main.version=${GITHUB_SHA::12}" -o vulnfeed ./cmd/vulnfeed
@@ -122,18 +128,18 @@ jobs:
         run: |
           tag="$(python3 -c 'import json,base64,sys; e=json.load(open("out/latest.dsse.json")); print(json.loads(base64.b64decode(e["payload"]))["tag"])')"
           cat > notes.md <<'EOF'
-          Vulnerability bundle for OpenCTEM (RFC-066 §5.5): a signed snapshot and the delta from the previous release.
+          Vulnerability bundle for OpenCTEM (RFC-066 §5.5), published hourly: a signed snapshot and the delta from the previous release.
 
           This product uses data from the NVD API but is not endorsed or certified by the NVD.
           See NOTICE for the terms of every source.
           EOF
           gh release create "$tag" --repo "$GITHUB_REPOSITORY" --title "$tag" --notes-file notes.md out/*
-      - name: Keep the last 60 releases
+      - name: Keep the last 72 releases (three days)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release list --repo "$GITHUB_REPOSITORY" --limit 1000 --json tagName,createdAt \
-            --jq 'sort_by(.createdAt) | reverse | .[60:] | .[].tagName' |
+            --jq 'sort_by(.createdAt) | reverse | .[72:] | .[].tagName' |
           while read -r tag; do
             gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
           done
