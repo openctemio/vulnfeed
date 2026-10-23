@@ -33,6 +33,8 @@ No release is published yet: the first one follows the key ceremony in
 | `aliases.manifest.dsse.json` | signed manifest of the alias dictionary: the bundle sequence it belongs to, the dictionary version (the release sequence the entries last changed in, so it only grows), the files below (SHA-256, sizes, counts) and the coverage stats |
 | `aliases.jsonl.gz` | the alias dictionary: CNA vendor/product names (and alternate CPE products) → canonical CPE product |
 | `aliases-state.jsonl.gz` | what each published CVE List record says about product identity (the learner's input, carried from release to release) |
+| `vulnids.manifest.dsse.json` | optional signed manifest of the vulnerability id alias map (see below) |
+| `vulnids.jsonl.gz` | the vulnerability id alias map: GHSA / OSV advisory id → the one CVE it aliases |
 | `latest.v2.dsse.json` | bundle v2: signed pointer that pins the digest of each v2 manifest |
 | `snapshot.v2.manifest.dsse.json`, `delta.v2.manifest.dsse.json` | bundle v2: signed manifests listing, per record stream (`products`, `vulns`, `ranges`), the chunks with SHA-256, sizes, record counts and first and last record id |
 | `sha256-<hex>.jsonl.gz` | bundle v2 chunks: gzip JSON Lines of the same records as v1, named by their digest |
@@ -189,3 +191,46 @@ rollback and freeze protection) and how to report a problem.
 ## Licence
 
 Apache-2.0 (the code). The data keeps its sources' terms; see `NOTICE`.
+
+## Vulnerability id alias map
+
+What: an optional signed map from an advisory id (a GHSA id, or an OSV
+ecosystem id: `PYSEC-`, `GO-`, `RUSTSEC-`, `GSD-`, `OSV-`) to the single CVE it
+aliases. A platform uses it to key a report that only knows a GHSA- or
+OSV id on the CVE, so two tools reporting the same flaw share one canonical
+id. It is used only to choose a finding's canonical id.
+
+Source: the GitHub Advisory Database (`advisories/github-reviewed/` of
+github/advisory-database, CC-BY 4.0, see `NOTICE`), read as one streamed
+archive of the default branch. If the read fails the release is published
+without the map (the log says why); a platform treats the map as optional.
+
+Files, next to the release:
+
+- `vulnids.manifest.dsse.json`: DSSE envelope, same online key and key set as
+  the alias dictionary manifest, payload type
+  `application/vnd.openctem.vulnfeed.vulnids+json`. Payload:
+  `{"schema":"openctem.vulnfeed.vulnids/v1","sequence":N,"version":V,"created_at":...,"expires_at":...,"files":[{"name":"vulnids.jsonl.gz","sha256":...,"size":...,"records":...}],"stats":{"advisories":N,"published":N,"over_broad":N,"no_cve":N}}`.
+  `sequence` is the release sequence (a platform accepts the map only for the
+  release its verified pointer names); `version` only grows and changes only
+  when the entries change; validity is the bundle's (7 days).
+- `vulnids.jsonl.gz`: gzip JSON Lines, at most 2,000,000 records and 32 MiB
+  compressed, sorted by `id`, no duplicate id:
+  `{"id":"GHSA-8gq3-9chp-cf2j","cve":"CVE-2024-1234","source":"ghsa"}`.
+  `source` is `ghsa` or `osv`.
+
+Guarantees:
+
+- One CVE per id. An advisory whose `aliases` name two or more different CVEs
+  is over-broad and omitted (`stats.over_broad`), as is one whose copies in
+  the source disagree; one with no CVE alias is omitted (`stats.no_cve`).
+  Only `aliases` count, never `related` or `upstream`.
+- Withdrawn advisories are omitted. Malicious-package ids (`MAL-`) are
+  skipped: they have no CVE meaning. Distro advisory ids (DSA, RHSA, USN,
+  ALAS, SUSE ...) are never ids.
+- GHSA ids are normalised to the upper-case prefix and lower-case body; CVE ids
+  are upper-case.
+- The same input gives a byte-identical entries file (fixed gzip header, sorted
+  records), hence the same SHA-256.
+- `vulnfeed verify` checks the signature, the sequence, the file digest, size
+  and record count, and every entry.

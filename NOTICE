@@ -17,11 +17,16 @@ CVE List (CVE Program, https://github.com/CVEProject/cvelistV5)
   trademark of The MITRE Corporation. Use is subject to the CVE Terms of
   Use: https://www.cve.org/Legal/TermsOfUse
 
+GitHub Advisory Database (https://github.com/github/advisory-database)
+  The vulnerability id alias map (vulnids.jsonl.gz) is derived from the
+  reviewed advisories of the GitHub Advisory Database, whose data is licensed
+  under CC-BY 4.0: https://creativecommons.org/licenses/by/4.0/. Only advisory
+  ids and the CVE ids they alias are taken; the map is a derived work.
+
 Planned sources (not yet in the bundles):
 
-OSV and the GitHub Advisory Database
-  Each record keeps its source and licence; GitHub Advisory Database data is
-  licensed under CC-BY 4.0: https://github.com/github/advisory-database
+OSV
+  Each record keeps its source and licence.
 
 CISA Known Exploited Vulnerabilities catalog
   A work of the U.S. government (public domain).
