@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -28,6 +29,7 @@ import (
 	"github.com/openctemio/vulnfeed/internal/cve5"
 	"github.com/openctemio/vulnfeed/internal/dsse"
 	"github.com/openctemio/vulnfeed/internal/nvd"
+	"github.com/openctemio/vulnfeed/internal/vulnid"
 )
 
 // version is set at build time (-ldflags "-X main.version=...").
@@ -79,6 +81,7 @@ func cmdBuild(ctx context.Context, args []string) error {
 	now := time.Now().UTC()
 	var prev *bundle.Snapshot
 	var prevAliases *bundle.AliasManifest
+	var prevVulnIDs *bundle.VulnIDManifest
 	state := map[string]alias.Obs{}
 	if *prevDir != "" {
 		v, err := bundle.VerifyDir(*prevDir, bundle.VerifyOptions{PinnedRoot: *root, Now: now, AllowExpired: true, SkipRecordChk: true})
@@ -96,6 +99,12 @@ func cmdBuild(ctx context.Context, args []string) error {
 			logf("previous release has no alias dictionary: its learner state starts empty (a CVE List baseline read fills it)")
 		} else if state, err = bundle.ReadAliasState(*prevDir, prevAliases); err != nil {
 			return fmt.Errorf("previous release: %w", err)
+		}
+		// A previous map that does not verify is ignored: the version
+		// restarts at the release sequence, which only grows.
+		if prevVulnIDs, err = bundle.VerifyVulnIDs(*prevDir, v.KeySet, v.Latest.Sequence); err != nil {
+			logf("previous vulnerability id map ignored: %v", err)
+			prevVulnIDs = nil
 		}
 	}
 	opt := collect.Options{Now: now, AllowMassChange: *mass, Since: sinceOf(now, *trial), NVDMinInterval: *nvdEvery,
@@ -125,6 +134,7 @@ func cmdBuild(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	buildVulnIDs(ctx, *out, next.Sequence, prevVulnIDs, now)
 	logf("built sequence %d: %d vulnerabilities, %d ranges, %d products", snap.Sequence, snap.Stats.Vulns, snap.Stats.Ranges, snap.Stats.Products)
 	logf("alias dictionary v%d: %d entries; %d published CVEs read: %d resolved (%d by CNA names, %d of them through an entry), %d unresolvable, %d unresolved; coverage %.1f%%",
 		am.Version, len(entries), stats.Published, stats.Resolved, stats.ResolvedByName, stats.ResolvedByEntry, stats.Unresolvable, stats.Unresolved, 100*stats.Coverage)
@@ -132,6 +142,26 @@ func cmdBuild(ctx context.Context, args []string) error {
 		logf("delta from %d: %d vulnerabilities, +%d -%d ranges", delta.BaseSequence, delta.Stats.Vulns, delta.Stats.RangesAdded, delta.Stats.RangesRemoved)
 	}
 	return nil
+}
+
+// buildVulnIDs writes the optional vulnerability id map. A failure is
+// logged and the release goes out without it (platforms treat it as
+// optional).
+func buildVulnIDs(ctx context.Context, out string, sequence uint64, prev *bundle.VulnIDManifest, now time.Time) {
+	c := vulnid.NewClient()
+	c.Log = logf
+	entries, stats, err := c.Fetch(ctx)
+	if err == nil {
+		var m *bundle.VulnIDManifest
+		if m, err = bundle.WriteVulnIDs(out, sequence, prev, entries, stats, now); err == nil {
+			logf("vulnerability id map v%d: %d entries from %d advisories (%d over-broad, %d without a CVE omitted)",
+				m.Version, stats.Published, stats.Advisories, stats.OverBroad, stats.NoCVE)
+			return
+		}
+	}
+	_ = os.Remove(filepath.Join(out, bundle.VulnIDsEntriesFile))
+	_ = os.Remove(filepath.Join(out, "vulnids.manifest.json"))
+	logf("vulnerability id map skipped (the release is published without it): %v", err)
 }
 
 func cmdSign(args []string) error {
@@ -184,6 +214,16 @@ func cmdVerify(args []string) error {
 			return err
 		}
 		logf("verified alias dictionary v%d (%d entries, coverage %.1f%%)", am.Version, am.Files[0].Records, 100*am.Stats.Coverage)
+	}
+	vm, err := bundle.VerifyVulnIDs(*dir, v.KeySet, v.Latest.Sequence)
+	if err != nil {
+		return err
+	}
+	if vm != nil {
+		if _, err := bundle.ReadVulnIDEntries(*dir, vm); err != nil {
+			return err
+		}
+		logf("verified vulnerability id map v%d (%d entries)", vm.Version, vm.Files[0].Records)
 	}
 	logf("verified sequence %d (snapshot %d vulnerabilities, %d ranges; key set v%d)", v.Latest.Sequence,
 		v.Snapshot.Stats.Vulns, v.Snapshot.Stats.Ranges, v.KeySet.Version)
