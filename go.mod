@@ -2,7 +2,7 @@ module github.com/openctemio/vulnfeed
 
 go 1.26.0
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 require github.com/openctemio/ctis/transfer v0.1.0
 
