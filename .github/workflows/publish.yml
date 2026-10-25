@@ -101,7 +101,7 @@ jobs:
     needs: [keys, build]
     if: needs.keys.outputs.ready == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 90
     environment: publish
     permissions:
       contents: write
@@ -137,7 +137,27 @@ jobs:
           CVE records from the CVE List of the CVE Program. CVE is a registered trademark of The MITRE Corporation.
           See NOTICE for the terms of every source.
           EOF
-          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --title "$tag" --notes-file notes.md out/*
+          # A draft first: platforms read releases/latest, which never names a
+          # draft, so a half-uploaded release is never seen. Assets go up in
+          # small batches with retries (a full snapshot has hundreds of chunks
+          # and one burst trips GitHub's secondary rate limit), then the draft
+          # is published once every asset is there.
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --title "$tag" --notes-file notes.md --draft
+          mapfile -t files < <(find out -maxdepth 1 -type f | sort)
+          for ((i = 0; i < ${#files[@]}; i += 20)); do
+            batch=("${files[@]:i:20}")
+            for attempt in 1 2 3 4 5 6; do
+              if gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber "${batch[@]}"; then break; fi
+              [ "$attempt" = 6 ] && exit 1
+              sleep $((attempt * 30))
+            done
+            sleep 3
+          done
+          want="${#files[@]}"
+          have="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length')"
+          [ "$have" = "$want" ] || { echo "release $tag has $have of $want assets"; exit 1; }
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest
       - name: Keep the last 72 releases (three days)
         env:
           GH_TOKEN: ${{ github.token }}
