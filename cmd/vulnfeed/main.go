@@ -135,6 +135,9 @@ func cmdBuild(ctx context.Context, args []string) error {
 		return err
 	}
 	buildVulnIDs(ctx, *out, next.Sequence, prevVulnIDs, now)
+	if err := bundle.CheckAssetCount(*out); err != nil {
+		return err
+	}
 	logf("built sequence %d: %d vulnerabilities, %d ranges, %d products", snap.Sequence, snap.Stats.Vulns, snap.Stats.Ranges, snap.Stats.Products)
 	logf("alias dictionary v%d: %d entries; %d published CVEs read: %d resolved (%d by CNA names, %d of them through an entry), %d unresolvable, %d unresolved; coverage %.1f%%",
 		am.Version, len(entries), stats.Published, stats.Resolved, stats.ResolvedByName, stats.ResolvedByEntry, stats.Unresolvable, stats.Unresolved, 100*stats.Coverage)

@@ -40,6 +40,15 @@ func big(seq uint64, n, changed int) *Snapshot {
 	return s
 }
 
+// smallChunks makes chunks of about 2000 records for the test (the SDK
+// default), so a few thousand records split.
+func smallChunks(t *testing.T) {
+	t.Helper()
+	old := chunkRecords
+	chunkRecords = 2000
+	t.Cleanup(func() { chunkRecords = old })
+}
+
 func writeAt(t *testing.T, prev, next *Snapshot) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -75,6 +84,7 @@ func chunkHashes(m sdkbundle.Manifest, stream string) []string {
 }
 
 func TestV2UnchangedInputGivesIdenticalChunks(t *testing.T) {
+	smallChunks(t)
 	a := writeAt(t, nil, big(1, 6000, -1))
 	b := writeAt(t, nil, big(1, 6000, -1))
 	c := writeAt(t, nil, big(2, 6000, -1)) // a later release of the same data
@@ -92,6 +102,7 @@ func TestV2UnchangedInputGivesIdenticalChunks(t *testing.T) {
 }
 
 func TestV2OneChangedVulnChangesOneVulnChunkAndOneRangeChunk(t *testing.T) {
+	smallChunks(t)
 	a := writeAt(t, nil, big(1, 6000, -1))
 	b := writeAt(t, nil, big(2, 6000, 3100))
 	ma, mb := manifestV2(t, a, unsignedSnapshotV2), manifestV2(t, b, unsignedSnapshotV2)
@@ -202,5 +213,42 @@ func TestV2RoundTripWithSDKConsumer(t *testing.T) {
 	}
 	if res.Kind != sdkbundle.KindSnapshot || len(col.vulns) != 3000 || len(col.ranges) != 3000 || !col.products[nginx.Key] || col.completes != 1 {
 		t.Fatalf("res %+v vulns %d ranges %d products %v", res, len(col.vulns), len(col.ranges), col.products)
+	}
+}
+
+// A GitHub release holds 1000 assets and a chunk is one asset: chunks must
+// be large (up to ChunkRecords records), not the SDK's 2000-record default.
+func TestV2ChunksAreLargeEnoughForTheAssetCap(t *testing.T) {
+	const n = 45000
+	dir := writeAt(t, nil, big(1, n, -1))
+	m := manifestV2(t, dir, unsignedSnapshotV2)
+	for _, s := range m.Streams {
+		want := (n + ChunkRecords - 1) / ChunkRecords
+		if s.Name == "products" {
+			want = 1
+		}
+		if len(s.Chunks) > want+1 {
+			t.Errorf("stream %s: %d chunks for %d records, want at most %d", s.Name, len(s.Chunks), n, want+1)
+		}
+		for _, c := range s.Chunks {
+			if c.Records > ChunkRecords {
+				t.Errorf("stream %s: chunk of %d records, importer cap is %d", s.Name, c.Records, ChunkRecords)
+			}
+		}
+	}
+	if err := CheckAssetCount(dir); err != nil {
+		t.Error(err)
+	}
+}
+
+func TestCheckAssetCountRefusesTooManyFiles(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i <= MaxAssets; i++ {
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("f%04d", i)), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := CheckAssetCount(dir); err == nil {
+		t.Fatal("want an error above MaxAssets")
 	}
 }
