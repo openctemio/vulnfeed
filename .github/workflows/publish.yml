@@ -59,7 +59,10 @@ jobs:
     needs: keys
     if: needs.keys.outputs.ready == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    # A build from scratch (no published release yet) reads all of NVD:
+    # without an NVD API key that takes about 4 hours. Incremental builds
+    # take minutes. 340 stays under the hosted runner's 6 h job limit.
+    timeout-minutes: 340
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
