@@ -79,8 +79,43 @@ func rangeID(r model.Range) string {
 	return r.Vuln + "#" + hex.EncodeToString(sum[:8])
 }
 
+// ChunkRecords is the records per v2 chunk. A GitHub release holds at most
+// 1000 assets and every chunk is one asset, so chunks are as large as the
+// platform's importer accepts (20000 records): the 2.7 million records of
+// a full snapshot are about 140 chunks, not the 1100 the SDK's default of
+// 2000 records gives. Target and cap are equal, so chunks end at the cap
+// (the content-defined boundary is only a tie-breaker below it).
+const ChunkRecords = 20000
+
+// chunkRecords is ChunkRecords; tests lower it to exercise splitting on
+// small inputs.
+var chunkRecords = ChunkRecords
+
+// MaxAssets is the most files a build may write into one release
+// directory. GitHub refuses the 1001st asset; failing the build at 600
+// leaves room and surfaces growth before the publish step.
+const MaxAssets = 600
+
+// CheckAssetCount fails when dir holds more than MaxAssets files.
+func CheckAssetCount(dir string) error {
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	n := 0
+	for _, e := range ents {
+		if e.Type().IsRegular() {
+			n++
+		}
+	}
+	if n > MaxAssets {
+		return fmt.Errorf("release holds %d files, more than %d: raise ChunkRecords (and the importer's chunk record cap) before GitHub's 1000-asset cap stops the publish", n, MaxAssets)
+	}
+	return nil
+}
+
 func writeKindV2(dir, kind string, s *Snapshot, ids []string, base uint64, now time.Time, meta V2Meta) error {
-	w, err := sdkbundle.NewWriter(dir, sdkbundle.WriterOptions{Feed: FeedV2, Sequence: s.Sequence, Kind: kind, BaseSequence: base})
+	w, err := sdkbundle.NewWriter(dir, sdkbundle.WriterOptions{Feed: FeedV2, Sequence: s.Sequence, Kind: kind, BaseSequence: base, TargetRecords: chunkRecords, MaxRecords: chunkRecords})
 	if err != nil {
 		return err
 	}
