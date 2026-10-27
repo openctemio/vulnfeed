@@ -87,7 +87,7 @@ jobs:
           TAG: ${{ steps.src.outputs.tag }}
         run: |
           gh release list --repo "$GITHUB_REPOSITORY" --limit 1000 --json tagName,createdAt \
-            --jq 'sort_by(.createdAt) | reverse | .[72:] | .[].tagName' |
+            --jq 'map(select(.tagName | test("^v1-[0-9]+$"))) | sort_by(.createdAt) | reverse | .[72:] | .[].tagName' |
           while read -r tag; do
             [ "$tag" = "$TAG" ] && continue
             gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
