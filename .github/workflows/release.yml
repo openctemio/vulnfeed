@@ -2,7 +2,9 @@ name: Release
 
 # Software release of the collector (tag vX.Y.Z): linux binaries, a checksum
 # file signed keyless with this workflow's OIDC identity. The feed itself is
-# published by openctemio/vulnfeed-bundles (tags v1-N), not here.
+# published by openctemio/vulnfeed-bundles (tags v1-N), not here. The release
+# is never "latest": releases/latest of this repository must stay the mirrored
+# feed, which platforms on the old default URL read.
 
 on:
   push:
@@ -64,5 +66,5 @@ jobs:
                 --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
               sha256sum -c SHA256SUMS --ignore-missing
           NOTES
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes-file notes.md \
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes-file notes.md --latest=false \
             dist/*.tar.gz dist/SHA256SUMS dist/SHA256SUMS.sigstore.json
