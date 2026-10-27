@@ -447,10 +447,11 @@ func Sign(dir string, priv ed25519.PrivateKey, keyset []byte, pinnedRoot string,
 		{"latest.json", LatestFile, LatestPayloadType},
 		{unsignedAliasesManifest, AliasesManifestFile, AliasesManifestPayloadType},
 		{unsignedVulnIDsManifest, VulnIDsManifestFile, VulnIDsManifestPayloadType},
+		{unsignedIntelManifest, IntelManifestFile, IntelManifestPayloadType},
 	}
 	for _, p := range pairs {
 		payload, err := os.ReadFile(filepath.Join(dir, p.in))
-		if errors.Is(err, os.ErrNotExist) && (p.in == "delta.manifest.json" || p.in == unsignedAliasesManifest || p.in == unsignedVulnIDsManifest) {
+		if errors.Is(err, os.ErrNotExist) && (p.in == "delta.manifest.json" || p.in == unsignedAliasesManifest || p.in == unsignedVulnIDsManifest || p.in == unsignedIntelManifest) {
 			continue
 		}
 		if err != nil {

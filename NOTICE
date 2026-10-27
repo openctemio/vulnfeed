@@ -23,13 +23,16 @@ GitHub Advisory Database (https://github.com/github/advisory-database)
   under CC-BY 4.0: https://creativecommons.org/licenses/by/4.0/. Only advisory
   ids and the CVE ids they alias are taken; the map is a derived work.
 
-Planned sources (not yet in the bundles):
+CISA Known Exploited Vulnerabilities catalog
+  A work of the U.S. government (public domain). The catalog is carried in
+  the signed side manifest (intel-kev.jsonl.gz).
+
+EPSS (Exploit Prediction Scoring System)
+  EPSS scores from FIRST.org: https://www.first.org/epss. The scores are
+  carried in the signed side manifest (intel-epss.jsonl.gz) with this
+  attribution: "EPSS, Forum of Incident Response and Security Teams".
+
+Planned source (not yet in the bundles):
 
 OSV
   Each record keeps its source and licence.
-
-CISA Known Exploited Vulnerabilities catalog
-  A work of the U.S. government (public domain).
-
-EPSS (Exploit Prediction Scoring System)
-  EPSS scores from FIRST.org: https://www.first.org/epss
