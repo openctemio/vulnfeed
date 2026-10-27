@@ -44,8 +44,13 @@ func IntelFileName(stream string) string { return "intel-" + stream + ".jsonl.gz
 
 // IntelStream describes one signed stream.
 type IntelStream struct {
-	Name        string    `json:"name"`
-	AsOf        time.Time `json:"as_of"`
+	Name string    `json:"name"`
+	AsOf time.Time `json:"as_of"`
+	// FetchedAt is when the collector last read the source successfully:
+	// the build time of a fresh stream, the earlier value of a carried one.
+	// A platform judges how current a stream is by it (AsOf is the
+	// publisher's own date and may be days old while the data is current).
+	FetchedAt   time.Time `json:"fetched_at"`
 	Version     string    `json:"version"`
 	Attribution string    `json:"attribution"`
 	File        File      `json:"file"`
@@ -141,7 +146,7 @@ func WriteIntel(dir string, sequence uint64, now time.Time, in IntelInput, prevD
 			return nil, notes, err
 		}
 		f.Name, f.Records = IntelFileName(c.name), c.n
-		m.Streams = append(m.Streams, IntelStream{Name: c.name, AsOf: c.asOf.UTC(), Version: c.version,
+		m.Streams = append(m.Streams, IntelStream{Name: c.name, AsOf: c.asOf.UTC(), FetchedAt: now, Version: c.version,
 			Attribution: intel.Attribution(c.name), File: f})
 		done[c.name] = true
 	}
@@ -213,7 +218,7 @@ func VerifyIntel(dir string, ks *dsse.KeySet, sequence uint64) (*IntelManifest, 
 	}
 	seen := map[string]bool{}
 	for _, s := range m.Streams {
-		if !intelStreamRe.MatchString(s.Name) || seen[s.Name] || s.File.Name != IntelFileName(s.Name) || s.AsOf.IsZero() {
+		if !intelStreamRe.MatchString(s.Name) || seen[s.Name] || s.File.Name != IntelFileName(s.Name) || s.AsOf.IsZero() || s.FetchedAt.IsZero() || s.FetchedAt.After(m.CreatedAt.Add(time.Hour)) {
 			return nil, fmt.Errorf("intel: stream %q is malformed or repeated", s.Name)
 		}
 		seen[s.Name] = true

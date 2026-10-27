@@ -234,11 +234,15 @@ Files, next to the release:
 
 - `intel.manifest.dsse.json`: DSSE envelope, same online key and key set,
   payload type `application/vnd.openctem.vulnfeed.intel+json`. Payload:
-  `{"schema":"openctem.vulnfeed.intel/v1","sequence":N,"created_at":...,"expires_at":...,"streams":[{"name":"kev","as_of":...,"version":"2026.10.24","attribution":"...","file":{"name":"intel-kev.jsonl.gz","sha256":...,"size":...,"records":...}}]}`.
+  `{"schema":"openctem.vulnfeed.intel/v1","sequence":N,"created_at":...,"expires_at":...,"streams":[{"name":"kev","as_of":...,"fetched_at":...,"version":"2026.10.24","attribution":"...","file":{"name":"intel-kev.jsonl.gz","sha256":...,"size":...,"records":...}}]}`.
   `sequence` is the release sequence; validity is the bundle's (7 days).
   `as_of` is the data date of the stream: KEV's `dateReleased`, EPSS's
   `score_date`. A platform applies a stream only when `as_of` is newer than
-  the date it holds, and skips a stream name it does not know.
+  the date it holds, and skips a stream name it does not know. `fetched_at`
+  is when the collector last read the source successfully (the build time of a
+  fresh stream; a carried-forward stream keeps its earlier value), so a
+  platform can tell a current stream whose publisher has not changed it from a
+  stream that stopped updating.
 - `intel-kev.jsonl.gz`: gzip JSON Lines sorted by `cve`:
   `{"cve":"CVE-2021-44228","vendor":...,"product":...,"name":...,"description":...,"date_added":"2021-12-10","due_date":"2021-12-24","ransomware":"Known","notes":...,"cwes":["CWE-20"]}`.
 - `intel-epss.jsonl.gz`: gzip JSON Lines sorted by `cve`:

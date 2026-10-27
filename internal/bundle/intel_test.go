@@ -56,6 +56,9 @@ func TestIntelRoundTrip(t *testing.T) {
 	if err != nil || got == nil {
 		t.Fatal(got, err)
 	}
+	if f := got.Stream("kev").FetchedAt; f.IsZero() || f.After(time.Now().Add(time.Minute)) {
+		t.Fatalf("fetched_at %v", f)
+	}
 	if len(got.Streams) != 2 || got.Streams[0].Name != "epss" || got.Streams[1].Name != "kev" || got.Sequence != 7 {
 		t.Fatalf("%+v", got)
 	}
@@ -116,6 +119,9 @@ func TestIntelCarriesForwardWhenFetchFailed(t *testing.T) {
 	e := got.Stream("epss")
 	if e == nil || !e.AsOf.Equal(day1) || e.File.SHA256 != m1.Stream("epss").File.SHA256 || m2.Stream("epss") == nil {
 		t.Fatalf("EPSS carried with its older data date: %+v", e)
+	}
+	if !e.FetchedAt.Equal(m1.Stream("epss").FetchedAt) || !got.Stream("kev").FetchedAt.After(e.FetchedAt.Add(-time.Second)) {
+		t.Errorf("a carried stream keeps its fetch time: %v vs %v", e.FetchedAt, m1.Stream("epss").FetchedAt)
 	}
 	if !strings.Contains(strings.Join(notes, "\n"), "epss: carried forward") {
 		t.Errorf("notes %v", notes)
