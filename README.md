@@ -56,6 +56,8 @@ on docs.openctem.io.
 | `aliases-state.jsonl.gz` | what each published CVE List record says about product identity (the learner's input, carried from release to release) |
 | `vulnids.manifest.dsse.json` | optional signed manifest of the vulnerability id alias map (see below) |
 | `vulnids.jsonl.gz` | the vulnerability id alias map: GHSA / OSV advisory id → the one CVE it aliases |
+| `intel.manifest.dsse.json` | optional signed side manifest of the exploitation signals (see "KEV and EPSS side manifest") |
+| `intel-kev.jsonl.gz`, `intel-epss.jsonl.gz` | the CISA KEV catalog and the FIRST EPSS scores, one entries file per stream |
 | `latest.v2.dsse.json` | bundle v2: signed pointer that pins the digest of each v2 manifest |
 | `snapshot.v2.manifest.dsse.json`, `delta.v2.manifest.dsse.json` | bundle v2: signed manifests listing, per record stream (`products`, `vulns`, `ranges`), the chunks with SHA-256, sizes, record counts and first and last record id |
 | `sha256-<hex>.jsonl.gz` | bundle v2 chunks: gzip JSON Lines of the same records as v1, named by their digest |
@@ -128,9 +130,9 @@ statement with its type, bounds and status changes) and its ADP containers
 (score, CWEs, affected items with CPEs, SSVC decision points), in
 `cve5.Record` (`References`, `Affected`, `ADP`). They are not yet carried:
 the record format is decoded strictly by platforms, so new fields (references,
-package products, advisory aliases, KEV and EPSS) come with the next record
-format version. CISA KEV and EPSS are synced by the platform itself until
-then. OSV (package ecosystems) needs package (purl) products and ecosystem
+package products, advisory aliases) come with the next record format
+version. CISA KEV and EPSS are not part of the record format: they travel as
+a signed side manifest (see "KEV and EPSS side manifest"). OSV (package ecosystems) needs package (purl) products and ecosystem
 version schemes in that format and is not collected yet.
 
 Terms and attribution: `NOTICE`.
@@ -212,6 +214,56 @@ rollback and freeze protection) and how to report a problem.
 ## Licence
 
 Apache-2.0 (the code). The data keeps its sources' terms; see `NOTICE`.
+
+## KEV and EPSS side manifest
+
+What: an optional signed side manifest with two streams: the CISA Known
+Exploited Vulnerabilities catalog (`kev`, full list every release, about
+1.5 thousand rows) and the FIRST EPSS scores (`epss`, full file, about 400
+thousand rows). The corpus format stays v1, so a platform that does not know
+the manifest ignores the files. A platform that does know it imports the
+streams and uses its own direct fetch only as a fallback.
+
+Sources: `www.cisa.gov` (the catalog JSON; if its firewall refuses the
+runner, the cisagov mirror on GitHub) and `epss.empiricalsecurity.com` (the
+daily gzipped CSV). Only these hosts are fetched and followed. EPSS is read
+once a day: a build whose previous release already holds scores from the
+last 20 hours carries them forward.
+
+Files, next to the release:
+
+- `intel.manifest.dsse.json`: DSSE envelope, same online key and key set,
+  payload type `application/vnd.openctem.vulnfeed.intel+json`. Payload:
+  `{"schema":"openctem.vulnfeed.intel/v1","sequence":N,"created_at":...,"expires_at":...,"streams":[{"name":"kev","as_of":...,"fetched_at":...,"version":"2026.10.24","attribution":"...","file":{"name":"intel-kev.jsonl.gz","sha256":...,"size":...,"records":...}}]}`.
+  `sequence` is the release sequence; validity is the bundle's (7 days).
+  `as_of` is the data date of the stream: KEV's `dateReleased`, EPSS's
+  `score_date`. A platform applies a stream only when `as_of` is newer than
+  the date it holds, and skips a stream name it does not know. `fetched_at`
+  is when the collector last read the source successfully (the build time of a
+  fresh stream; a carried-forward stream keeps its earlier value), so a
+  platform can tell a current stream whose publisher has not changed it from a
+  stream that stopped updating.
+- `intel-kev.jsonl.gz`: gzip JSON Lines sorted by `cve`:
+  `{"cve":"CVE-2021-44228","vendor":...,"product":...,"name":...,"description":...,"date_added":"2021-12-10","due_date":"2021-12-24","ransomware":"Known","notes":...,"cwes":["CWE-20"]}`.
+- `intel-epss.jsonl.gz`: gzip JSON Lines sorted by `cve`:
+  `{"cve":"CVE-2021-44228","epss":0.94358,"percentile":0.99978}` (both
+  fractions between 0 and 1, as FIRST publishes them).
+
+Guarantees:
+
+- Every record is validated before signing (id shape, ranges, no duplicate,
+  size caps). A KEV catalog under 500 entries or an EPSS file under 100,000
+  rows is refused as truncated.
+- A snapshot under 90 % of the previous release's record count is refused,
+  and so is a data date older than the previous release's.
+- A refused or unreadable source is not published: the previous release's
+  verified copy is carried forward with its older `as_of` (a platform sees the
+  age and may fall back to a direct fetch). A failure never fails the build.
+- `vulnfeed verify` checks the signature, the sequence, the digests and every
+  record of every stream it knows (an unknown stream is reported and skipped).
+- Attribution of both sources is in `NOTICE`, in the release notes and in the
+  signed `attribution` of each stream. `vulnfeed build --intel=false` leaves the
+  streams out.
 
 ## Vulnerability id alias map
 

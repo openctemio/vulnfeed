@@ -28,6 +28,7 @@ import (
 	"github.com/openctemio/vulnfeed/internal/collect"
 	"github.com/openctemio/vulnfeed/internal/cve5"
 	"github.com/openctemio/vulnfeed/internal/dsse"
+	"github.com/openctemio/vulnfeed/internal/intel"
 	"github.com/openctemio/vulnfeed/internal/nvd"
 	"github.com/openctemio/vulnfeed/internal/vulnid"
 )
@@ -72,6 +73,7 @@ func cmdBuild(ctx context.Context, args []string) error {
 	trial := fs.Duration("trial-since", 0, "without --prev: read only CVEs modified in this window (a trial, never published)")
 	nvdEvery := fs.Duration("nvd-min-interval", 2*time.Hour, "read NVD changes at most this often (a build in between keeps NVD's cursor)")
 	cveList := fs.Bool("cve-list", true, "also read the CVE List (GitHub API token in $GITHUB_TOKEN raises the rate limit)")
+	intelOn := fs.Bool("intel", true, "also read CISA KEV and FIRST EPSS into the signed side manifest")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -82,6 +84,7 @@ func cmdBuild(ctx context.Context, args []string) error {
 	var prev *bundle.Snapshot
 	var prevAliases *bundle.AliasManifest
 	var prevVulnIDs *bundle.VulnIDManifest
+	var prevIntel *bundle.IntelManifest
 	state := map[string]alias.Obs{}
 	if *prevDir != "" {
 		v, err := bundle.VerifyDir(*prevDir, bundle.VerifyOptions{PinnedRoot: *root, Now: now, AllowExpired: true, SkipRecordChk: true})
@@ -105,6 +108,12 @@ func cmdBuild(ctx context.Context, args []string) error {
 		if prevVulnIDs, err = bundle.VerifyVulnIDs(*prevDir, v.KeySet, v.Latest.Sequence); err != nil {
 			logf("previous vulnerability id map ignored: %v", err)
 			prevVulnIDs = nil
+		}
+		// Likewise the previous KEV/EPSS side manifest: without it nothing is
+		// carried forward and the shrink guards have no baseline.
+		if prevIntel, err = bundle.VerifyIntel(*prevDir, v.KeySet, v.Latest.Sequence); err != nil {
+			logf("previous KEV/EPSS manifest ignored: %v", err)
+			prevIntel = nil
 		}
 	}
 	opt := collect.Options{Now: now, AllowMassChange: *mass, Since: sinceOf(now, *trial), NVDMinInterval: *nvdEvery,
@@ -135,6 +144,9 @@ func cmdBuild(ctx context.Context, args []string) error {
 		return err
 	}
 	buildVulnIDs(ctx, *out, next.Sequence, prevVulnIDs, now)
+	if *intelOn {
+		buildIntel(ctx, *out, next.Sequence, *prevDir, prevIntel, now)
+	}
 	if err := bundle.CheckAssetCount(*out); err != nil {
 		return err
 	}
@@ -165,6 +177,42 @@ func buildVulnIDs(ctx context.Context, out string, sequence uint64, prev *bundle
 	_ = os.Remove(filepath.Join(out, bundle.VulnIDsEntriesFile))
 	_ = os.Remove(filepath.Join(out, "vulnids.manifest.json"))
 	logf("vulnerability id map skipped (the release is published without it): %v", err)
+}
+
+// buildIntel writes the optional KEV/EPSS side manifest. A source that cannot
+// be read or fails its checks is carried forward from the previous release
+// (with its older data date); a failure never fails the build.
+func buildIntel(ctx context.Context, out string, sequence uint64, prevDir string, prev *bundle.IntelManifest, now time.Time) {
+	c := intel.NewClient()
+	c.Log = logf
+	var in bundle.IntelInput
+	var err error
+	if in.KEV, err = c.FetchKEV(ctx); err != nil {
+		logf("KEV not read (the previous copy is carried forward): %v", err)
+		in.KEV = nil
+	}
+	// EPSS publishes once a day: skip the download when the previous
+	// release already holds today's scores.
+	if s := prev.Stream(intel.StreamEPSS); s != nil && now.Sub(s.AsOf) < 20*time.Hour {
+		logf("EPSS: the previous release is from %s; not read again", s.AsOf.Format(time.RFC3339))
+	} else if in.EPSS, err = c.FetchEPSS(ctx); err != nil {
+		logf("EPSS not read (the previous copy is carried forward): %v", err)
+		in.EPSS = nil
+	}
+	m, notes, err := bundle.WriteIntel(out, sequence, now, in, prevDir, prev)
+	for _, n := range notes {
+		logf("intel: %s", n)
+	}
+	if err != nil || m == nil {
+		_ = os.Remove(filepath.Join(out, bundle.IntelFileName(intel.StreamKEV)))
+		_ = os.Remove(filepath.Join(out, bundle.IntelFileName(intel.StreamEPSS)))
+		_ = os.Remove(filepath.Join(out, "intel.manifest.json"))
+		logf("KEV/EPSS manifest skipped (the release is published without it): %v", err)
+		return
+	}
+	for _, s := range m.Streams {
+		logf("intel %s: %d records, data date %s, version %s", s.Name, s.File.Records, s.AsOf.Format(time.RFC3339), s.Version)
+	}
 }
 
 func cmdSign(args []string) error {
@@ -227,6 +275,34 @@ func cmdVerify(args []string) error {
 			return err
 		}
 		logf("verified vulnerability id map v%d (%d entries)", vm.Version, vm.Files[0].Records)
+	}
+	im, err := bundle.VerifyIntel(*dir, v.KeySet, v.Latest.Sequence)
+	if err != nil {
+		return err
+	}
+	if im != nil {
+		for i := range im.Streams {
+			s := &im.Streams[i]
+			var n int
+			switch s.Name {
+			case intel.StreamKEV:
+				e, err := bundle.ReadKEV(*dir, s)
+				if err != nil {
+					return err
+				}
+				n = len(e)
+			case intel.StreamEPSS:
+				e, err := bundle.ReadEPSS(*dir, s)
+				if err != nil {
+					return err
+				}
+				n = len(e)
+			default:
+				logf("intel stream %q is not known to this tool: skipped", s.Name)
+				continue
+			}
+			logf("verified %s (%d records, data date %s)", s.Name, n, s.AsOf.Format(time.RFC3339))
+		}
 	}
 	logf("verified sequence %d (snapshot %d vulnerabilities, %d ranges; key set v%d)", v.Latest.Sequence,
 		v.Snapshot.Stats.Vulns, v.Snapshot.Stats.Ranges, v.KeySet.Version)
