@@ -4,24 +4,45 @@ The vulnerability collector of [OpenCTEM](https://github.com/openctemio/openctem
 Every hour it reads what the public vulnerability sources changed, normalises them into
 OpenCTEM's corpus model (products, vulnerabilities and affected version
 ranges), validates every record, signs the result and publishes it as a
-GitHub Release. OpenCTEM platforms never call the sources themselves: they
+GitHub Release (in vulnfeed-bundles). OpenCTEM platforms never call the sources themselves: they
 download (or, air-gapped, upload) a bundle, verify it and import it.
 
 Design: OpenCTEM RFC-066 §5.5, *Feed: collector and signed bundles*.
 
+## Feed and releases
+
+This repository is the code of the collector. The data it produces is published
+elsewhere:
+
+| What | Where | Tags |
+|---|---|---|
+| The collector software | this repository's releases | `vX.Y.Z` (software version; linux amd64 and arm64 binaries, `SHA256SUMS` signed keyless with cosign) |
+| The vulnerability feed | [openctemio/vulnfeed-bundles](https://github.com/openctemio/vulnfeed-bundles) releases | `v1-N`: bundle format v1, sequence N; the release title carries the UTC date |
+
+A workflow in vulnfeed-bundles checks out this repository at a pinned
+version, builds the collector, and builds, signs, verifies and publishes a
+bundle every hour. Splitting code from data keeps the software's release
+history readable and lets the feed be published with the repository's own
+token.
+
+Transition (dated plan): until the platform release whose default feed URL is
+`https://github.com/openctemio/vulnfeed-bundles/releases` has been out for 30 days,
+`.github/workflows/publish.yml` here mirrors the latest feed release into this
+repository's releases (verified with the pinned root key, not re-signed), so
+installs on the old default keep working. After that a pull request removes the
+mirror and the old `v1-N` releases here. Nothing new is signed in this repository.
+
 ## Using it with your platform
 
 Nothing is installed on your hosts: the platform downloads (or, air-gapped,
-reads) a release, verifies it against the root key id you pin and imports
-it. Set `VULNFEED_ROOT_KEY_ID` on the API (from `keys/root-keyid.txt`); without
-it no bundle is imported. Setup, air-gapped use and how to check the import:
+reads) a release of the feed, verifies it against the root key id it pins and
+imports it. The official root key id is built into the platform; set
+`VULNFEED_ROOT_KEY_ID` only to trust a feed you sign yourself. Setup,
+air-gapped use and how to check the import:
 [Vulnerability and program feeds](https://docs.openctem.io/operations/feeds/)
 on docs.openctem.io.
 
-No release is published yet: the first one follows the key ceremony in
-[`keys/README.md`](keys/README.md).
-
-## What a release contains
+## What a feed release contains
 
 | Asset | Content |
 |---|---|
@@ -48,7 +69,7 @@ then removed; read v2 with the `pkg/transfer/bundle` consumer of the
 OpenCTEM SDK. `vulnfeed verify` checks both formats.
 
 A platform reads
-`https://github.com/openctemio/vulnfeed/releases/latest/download/latest.dsse.json`
+`https://github.com/openctemio/vulnfeed-bundles/releases/latest/download/latest.dsse.json`
 and the files of the release it names.
 
 Cadence: a release every hour. Its delta is what changed in that hour;
@@ -163,7 +184,7 @@ product that has data of its own and holds the rest for review.
 
 ```sh
 go build -o vulnfeed ./cmd/vulnfeed
-gh release download --repo openctemio/vulnfeed --dir bundle
+gh release download --repo openctemio/vulnfeed-bundles --dir bundle
 ./vulnfeed verify --dir bundle --root-key-id "$(cat keys/root-keyid.txt)"
 ```
 
