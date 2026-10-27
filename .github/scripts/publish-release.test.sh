@@ -19,7 +19,7 @@ case "$1 $2" in
   [ -e "$STATE/exists" ] || exit 1
   if [[ "$*" == *isDraft* ]]; then [ -e "$STATE/draft" ] && echo true || echo false; exit 0; fi
   if [[ "$*" == *assets* ]]; then for f in "$a"/*; do [ -e "$f" ] && printf '%s\t%s\n' "$(basename "$f")" "$(stat -c %s "$f")"; done; exit 0; fi ;;
-"release create") touch "$STATE/exists" "$STATE/draft" ;;
+"release create") touch "$STATE/exists" "$STATE/draft"; echo "$*" > "$STATE/create" ;;
 "release upload")
   shift 3; while [ "$1" != --repo ]; do shift; done; shift 2
   [ "$1" = --clobber ] && shift
@@ -75,4 +75,12 @@ bash "$script" v1-1 "$tmp/out" | grep -q 'already published' || fail "published 
 reset
 MAX_ASSETS=2 bash "$script" v1-1 "$tmp/out" 2>/dev/null && fail "cap not enforced"
 [ ! -e "$STATE/exists" ] || fail "release created despite the cap"
+
+# 6. the title is the tag unless TITLE says otherwise
+reset
+bash "$script" v1-1 "$tmp/out" >/dev/null
+grep -q -- '--title v1-1 ' "$STATE/create" || fail "default title is not the tag"
+reset
+TITLE="v1-1 2026-10-27" bash "$script" v1-1 "$tmp/out" >/dev/null
+grep -q -- '--title v1-1 2026-10-27 ' "$STATE/create" || fail "TITLE ignored"
 echo ok

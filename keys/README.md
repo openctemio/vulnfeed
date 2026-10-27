@@ -1,5 +1,10 @@
 # Keys
 
+The key set of record is `keys/keyset.dsse.json` in
+[openctemio/vulnfeed-bundles](https://github.com/openctemio/vulnfeed-bundles),
+which signs the feed (rotation steps are in its `keys/README.md`). The copy here
+is the one the software was released with; the root key id is the same.
+
 This directory holds only public material:
 
 | File | What |
@@ -26,7 +31,7 @@ go build -o vulnfeed ./cmd/vulnfeed
 Then:
 
 - commit `keys/root-keyid.txt` (the root key id) and `keys/keyset.dsse.json`;
-- create the GitHub environment **`publish`**: deployment branches limited
+- in the repository that publishes the feed (vulnfeed-bundles), create the GitHub environment **`publish`**: deployment branches limited
   to the default branch; add the secret **`VULNFEED_SIGNING_KEY`** with the
   content of `signing.key`; delete `signing.key` from the machine;
 - optionally add the repository secret **`NVD_API_KEY`** (a free NVD API

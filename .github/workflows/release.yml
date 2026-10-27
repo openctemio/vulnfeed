@@ -1,0 +1,68 @@
+name: Release
+
+# Software release of the collector (tag vX.Y.Z): linux binaries, a checksum
+# file signed keyless with this workflow's OIDC identity. The feed itself is
+# published by openctemio/vulnfeed-bundles (tags v1-N), not here.
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Test
+        run: go test ./...
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Build, checksum and sign
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          mkdir dist
+          for goarch in amd64 arm64; do
+            stage="$(mktemp -d)"
+            CGO_ENABLED=0 GOOS=linux GOARCH="$goarch" \
+              go build -trimpath -ldflags="-s -w -X main.version=${version}" -o "$stage/vulnfeed" ./cmd/vulnfeed
+            cp LICENSE NOTICE "$stage/"
+            tar -C "$stage" -czf "dist/vulnfeed_${version}_linux_${goarch}.tar.gz" vulnfeed LICENSE NOTICE
+          done
+          cd dist
+          sha256sum ./*.tar.gz | sed 's# \./# #' > SHA256SUMS
+          cosign sign-blob --yes --bundle SHA256SUMS.sigstore.json SHA256SUMS
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cat > notes.md <<'NOTES'
+          Software release of the vulnfeed collector (linux amd64 and arm64).
+
+          The vulnerability feed is not in this repository's releases: it is published by openctemio/vulnfeed-bundles.
+
+          Verify a download:
+
+              cosign verify-blob --bundle SHA256SUMS.sigstore.json \
+                --certificate-identity-regexp '^https://github.com/openctemio/vulnfeed/\.github/workflows/release\.yml@refs/tags/v' \
+                --certificate-oidc-issuer https://token.actions.githubusercontent.com SHA256SUMS
+              sha256sum -c SHA256SUMS --ignore-missing
+          NOTES
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --title "$TAG" --notes-file notes.md \
+            dist/*.tar.gz dist/SHA256SUMS dist/SHA256SUMS.sigstore.json

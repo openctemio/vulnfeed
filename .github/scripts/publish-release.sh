@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Publishes the files of a bundle directory as the GitHub release TAG.
-# Usage: publish-release.sh TAG DIR   (env: GITHUB_REPOSITORY, GH_TOKEN, NOTES)
+# Usage: publish-release.sh TAG DIR   (env: GITHUB_REPOSITORY, GH_TOKEN, NOTES, TITLE)
 #
 # Safe to run again after any failure:
 #  - an existing DRAFT of the tag is resumed, not recreated;
@@ -39,7 +39,7 @@ assets() { gh release view "$tag" --repo "$repo" --json assets --jq '.assets[] |
 if gh release view "$tag" --repo "$repo" >/dev/null 2>&1; then
   draft=$(gh release view "$tag" --repo "$repo" --json isDraft --jq .isDraft)
 else
-  gh release create "$tag" --repo "$repo" --title "$tag" --notes-file "$notes" --draft
+  gh release create "$tag" --repo "$repo" --title "${TITLE:-$tag}" --notes-file "$notes" --draft
   draft=true
 fi
 
