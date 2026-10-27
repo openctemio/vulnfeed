@@ -1,0 +1,27 @@
+# One-shot: copy the feed's online signing key from this repo's `publish`
+# environment into openctemio/vulnfeed-bundles (where the feed is now built),
+# without the key ever leaving GitHub's secret store or appearing in a log.
+# Needs a short-lived fine-grained token BUNDLES_ADMIN_TOKEN (vulnfeed-bundles
+# only; Secrets and Environments: read and write) set in this repo's `publish`
+# environment. Remove this workflow, the token and both secrets here after use.
+name: Transfer signing key
+on:
+  workflow_dispatch:
+permissions: {}
+jobs:
+  transfer:
+    runs-on: ubuntu-latest
+    environment: publish
+    timeout-minutes: 5
+    steps:
+      - name: Copy VULNFEED_SIGNING_KEY into vulnfeed-bundles
+        env:
+          GH_TOKEN: ${{ secrets.BUNDLES_ADMIN_TOKEN }}
+          KEY: ${{ secrets.VULNFEED_SIGNING_KEY }}
+        run: |
+          set -eu
+          [ -n "${GH_TOKEN:-}" ] || { echo "::error::BUNDLES_ADMIN_TOKEN is not set in the publish environment"; exit 1; }
+          [ -n "${KEY:-}" ] || { echo "::error::VULNFEED_SIGNING_KEY is not set"; exit 1; }
+          printf '%s' "$KEY" | gh secret set VULNFEED_SIGNING_KEY --env publish --repo openctemio/vulnfeed-bundles
+          gh api repos/openctemio/vulnfeed-bundles/environments/publish/secrets --jq '.secrets[].name' | grep -qx VULNFEED_SIGNING_KEY
+          echo "VULNFEED_SIGNING_KEY is set in openctemio/vulnfeed-bundles (publish)."
