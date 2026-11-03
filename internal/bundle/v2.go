@@ -23,7 +23,7 @@ import (
 	"sort"
 	"time"
 
-	sdkbundle "github.com/openctemio/ctis/transfer/bundle"
+	sdkbundle "github.com/openctemio/contract/transfer/bundle"
 
 	"github.com/openctemio/vulnfeed/internal/dsse"
 	"github.com/openctemio/vulnfeed/internal/model"
