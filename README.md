@@ -32,6 +32,51 @@ repository's releases (verified with the pinned root key, not re-signed), so
 installs on the old default keep working. After that a pull request removes the
 mirror and the old `v1-N` releases here. Nothing new is signed in this repository.
 
+## How a release is built and signed
+
+The hourly workflow of vulnfeed-bundles runs this collector in three jobs.
+Only the last one holds the signing key; the job that talks to the sources
+never sees it.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  box Sources, read over HTTPS only
+  participant SRC as NVD, CVE List, CISA KEV, FIRST EPSS, advisory database
+  end
+  box vulnfeed-bundles workflow
+  participant PF as preflight (publish environment)
+  participant B as build (no signing key)
+  participant P as publish (publish environment, VULNFEED_SIGNING_KEY)
+  end
+  participant R as vulnfeed-bundles releases
+  PF->>PF: VULNFEED_SIGNING_KEY set, keys/keyset.dsse.json names keys/root-keyid.txt and is not expired
+  B->>R: gh release download (latest), else the legacy repository, else fail
+  B->>B: vulnfeed build --prev: bundle.VerifyDir against the pinned root (expired allowed)
+  B->>SRC: collect.Build reads NVD and CVE List changes since the previous build
+  B->>B: merge, collect.Aliases, Snapshot.Validate, removal guard 2 percent
+  B->>B: bundle.Write snapshot, delta and v2 chunks, WriteAliases
+  B->>SRC: buildVulnIDs (advisory database), buildIntel (KEV, EPSS)
+  B->>B: a failed side source is skipped or carried forward, never fails the build
+  B->>P: upload-artifact out/ (unsigned)
+  P->>P: vulnfeed sign: key must be listed in the key set, DSSE-sign pointer and manifests, copy the key set
+  P->>P: vulnfeed verify --dir out, as a platform verifies
+  P->>R: publish-release.sh: draft, upload missing assets, publish
+  P->>R: delete releases beyond the newest 72
+```
+
+- `vulnfeed sign` refuses a key that is not in the key set the pinned root
+  signed (`bundle.Sign`). Optional manifests (delta, aliases, vulnerability
+  ids, KEV and EPSS) are signed when present.
+- `--allow-mass-change` (the workflow's `allow_mass_change` input) is the only
+  way past the removal guard; use it only after checking the source.
+- Platforms read `releases/latest`, which never names a draft, so a
+  half-uploaded release is never imported.
+
+How a platform downloads and verifies a release:
+[Feed delivery](https://docs.openctem.io/how-it-works/vulnerability-intel/feed-delivery/)
+on docs.openctem.io.
+
 ## Using it with your platform
 
 Nothing is installed on your hosts: the platform downloads (or, air-gapped,
