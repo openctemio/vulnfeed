@@ -1,3 +1,10 @@
-# Advisory cards are signed and shipped to every platform. A change to a card
-# or to the reviewer allowlist (cards/REVIEWERS) needs a code-owner review.
-/cards/    @0xmanhnv
+# Advisory cards are signed and shipped to every platform. Everything that
+# holds, builds, checks or guards them needs a code-owner review: the cards
+# and the reviewer allowlist, the validators and the builder, and the CI
+# workflows and this file (otherwise a guard could be removed unreviewed).
+/.github/        @0xmanhnv
+/cmd/vulnfeed/   @0xmanhnv
+/internal/card/  @0xmanhnv
+/internal/bundle/ @0xmanhnv
+/cards/          @0xmanhnv
+/cards/REVIEWERS @0xmanhnv

@@ -763,7 +763,9 @@ func loadDir(dir string, decode func([]byte) (*Card, error)) ([]*Card, error) {
 // reason) but never dropped, and its revision never goes back. At an equal
 // revision the card must be byte-identical (canonical JSON): any change,
 // a withdrawal included, needs a new revision. A new revision moves
-// updated_at forward and records it as the last history entry.
+// updated_at forward and records it as the last history entry. A reported
+// card (no person's review) is accepted only as a first publication or
+// after a reported one, never after a reviewed or withdrawn one.
 func CheckSuccessor(prev, next []*Card) error {
 	byID := map[string]*Card{}
 	for _, c := range next {
@@ -784,6 +786,8 @@ func CheckSuccessor(prev, next []*Card) error {
 			if !same {
 				return fmt.Errorf("cards: %s changed (or was withdrawn) without a new revision", p.ID)
 			}
+		case n.Review.State == StateReported && p.Review.State != StateReported:
+			return fmt.Errorf("cards: %s revision %d is reported but the published revision is %s: a reviewed or withdrawn card never goes back to reported", p.ID, n.Revision, p.Review.State)
 		case !n.UpdatedAt.After(p.UpdatedAt):
 			return fmt.Errorf("cards: %s revision %d must move updated_at past the published %s", p.ID, n.Revision, p.UpdatedAt.Format(time.RFC3339))
 		case len(n.History) == 0 || !n.History[len(n.History)-1].At.Equal(n.UpdatedAt):

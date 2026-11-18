@@ -208,6 +208,23 @@ func TestCheckSuccessor(t *testing.T) {
 		t.Fatal("a new revision whose history entry is not dated updated_at accepted")
 	}
 
+	for _, held := range []string{StateReviewed, StateWithdrawn} {
+		h := reviewed(first(t), ModeTwoPerson, "reviewer")
+		h.Review.State = held
+		rep := next()
+		rep.Review = Review{State: StateReported}
+		if err := CheckSuccessor([]*Card{h}, []*Card{rep}); err == nil {
+			t.Fatalf("a reported revision after a %s card accepted", held)
+		}
+	}
+	reportedPrev := first(t)
+	reportedPrev.Review = Review{State: StateReported}
+	rep2 := next()
+	rep2.Review = Review{State: StateReported}
+	if err := CheckSuccessor([]*Card{reportedPrev}, []*Card{rep2}); err != nil {
+		t.Fatalf("reported after reported refused: %v", err)
+	}
+
 	older := reviewed(first(t), ModeTwoPerson, "reviewer")
 	prev[0].Revision = 2
 	if err := CheckSuccessor(prev, []*Card{older}); err == nil {
