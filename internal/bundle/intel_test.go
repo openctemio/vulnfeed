@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/openctemio/vulnfeed/internal/card"
 	"github.com/openctemio/vulnfeed/internal/intel"
 )
 
@@ -157,5 +158,59 @@ func TestIntelNothingToPublish(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, unsignedIntelManifest)); err == nil {
 		t.Error("no manifest may be written without streams")
+	}
+}
+
+func testCards(t *testing.T) []*card.Card {
+	t.Helper()
+	cs, err := card.LoadDir("../../cards")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cs {
+		at := c.UpdatedAt.Add(time.Hour)
+		c.Review.State, c.Review.Mode, c.Review.ReviewedBy, c.Review.ReviewedAt = card.StateReviewed, card.ModeTwoPerson, "reviewer", &at
+	}
+	return cs
+}
+
+func TestIntelCardsRoundTrip(t *testing.T) {
+	k := newKeys(t)
+	cs := testCards(t)
+	dir, _, _ := buildWithIntel(t, k, 9, IntelInput{KEV: testKEV(600, day1), Cards: cs}, "", nil)
+	got, err := VerifyIntel(dir, verifiedKeySet(t, k), 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := got.Stream(card.StreamName)
+	if s == nil || s.Version != card.Schema || s.File.Records != len(cs) || !s.AsOf.Equal(CardsAsOf(cs)) || s.Attribution != card.Attribution {
+		t.Fatalf("%+v", s)
+	}
+	back, err := ReadCards(dir, s)
+	if err != nil || len(back) != len(cs) || back[0].ID != cs[0].ID || len(back[0].Affected) != len(cs[0].Affected) {
+		t.Fatal(len(back), err)
+	}
+
+	// A build without cards carries the previous release's stream forward.
+	dir2, m2, notes := buildWithIntel(t, k, 10, IntelInput{KEV: testKEV(600, day2)}, dir, got)
+	if m2.Stream(card.StreamName) == nil || !strings.Contains(strings.Join(notes, ";"), "cards: carried forward") {
+		t.Fatal(notes)
+	}
+	if _, err := VerifyIntel(dir2, verifiedKeySet(t, k), 10); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReadCardsRefusesUnpublished(t *testing.T) {
+	k := newKeys(t)
+	cs := testCards(t)
+	cs[0].Review = card.Review{State: card.StateInReview, Author: cs[0].Review.Author}
+	dir, _, _ := buildWithIntel(t, k, 9, IntelInput{Cards: cs}, "", nil)
+	got, err := VerifyIntel(dir, verifiedKeySet(t, k), 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadCards(dir, got.Stream(card.StreamName)); err == nil {
+		t.Fatal("a card in review was read as published")
 	}
 }

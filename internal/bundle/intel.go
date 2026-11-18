@@ -25,6 +25,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/openctemio/vulnfeed/internal/card"
 	"github.com/openctemio/vulnfeed/internal/dsse"
 	"github.com/openctemio/vulnfeed/internal/intel"
 )
@@ -83,6 +84,25 @@ func (m *IntelManifest) Stream(name string) *IntelStream {
 type IntelInput struct {
 	KEV  *intel.KEV
 	EPSS *intel.EPSS
+	// Cards are the published (reviewed or withdrawn) advisory cards, nil
+	// when the build was not given a cards directory. They are already
+	// checked against the previous release (card.CheckSuccessor).
+	Cards []*card.Card
+}
+
+// CardsAsOf is the data date of a set of cards: the newest revision or
+// review among them.
+func CardsAsOf(cards []*card.Card) time.Time {
+	var t time.Time
+	for _, c := range cards {
+		if c.UpdatedAt.After(t) {
+			t = c.UpdatedAt
+		}
+		if c.Review.ReviewedAt != nil && c.Review.ReviewedAt.After(t) {
+			t = *c.Review.ReviewedAt
+		}
+	}
+	return t.UTC()
 }
 
 // WriteIntel writes the entries files and the unsigned manifest into dir.
@@ -127,6 +147,17 @@ func WriteIntel(dir string, sequence uint64, now time.Time, in IntelInput, prevD
 			return nil
 		}})
 	}
+	if len(in.Cards) > 0 {
+		cs := in.Cards
+		cands = append(cands, fresh{name: card.StreamName, asOf: CardsAsOf(cs), version: card.Schema, n: len(cs), fill: func(enc *json.Encoder) error {
+			for _, c := range cs {
+				if err := enc.Encode(c); err != nil {
+					return err
+				}
+			}
+			return nil
+		}})
+	}
 	done := map[string]bool{}
 	for _, c := range cands {
 		old := prev.Stream(c.name)
@@ -135,7 +166,8 @@ func WriteIntel(dir string, sequence uint64, now time.Time, in IntelInput, prevD
 			notes = append(notes, fmt.Sprintf("%s: the source's data date %s is older than the previous release's %s; carried forward",
 				c.name, c.asOf.Format(time.RFC3339), old.AsOf.Format(time.RFC3339)))
 			continue
-		case old != nil:
+		case old != nil && c.name != card.StreamName:
+			// Cards never shrink: card.CheckSuccessor refused a dropped one.
 			if err := intel.CheckShrink(c.name, c.n, old.File.Records); err != nil {
 				notes = append(notes, err.Error()+"; carried forward")
 				continue
@@ -147,7 +179,7 @@ func WriteIntel(dir string, sequence uint64, now time.Time, in IntelInput, prevD
 		}
 		f.Name, f.Records = IntelFileName(c.name), c.n
 		m.Streams = append(m.Streams, IntelStream{Name: c.name, AsOf: c.asOf.UTC(), FetchedAt: now, Version: c.version,
-			Attribution: intel.Attribution(c.name), File: f})
+			Attribution: attributionOf(c.name), File: f})
 		done[c.name] = true
 	}
 	// Carry forward every stream of the previous release that was not
@@ -272,6 +304,38 @@ func ReadEPSS(dir string, s *IntelStream) ([]intel.EPSSEntry, error) {
 	})
 	if err == nil && len(out) != s.File.Records {
 		err = fmt.Errorf("intel: %d epss entries, the manifest says %d", len(out), s.File.Records)
+	}
+	return out, err
+}
+
+func attributionOf(stream string) string {
+	if stream == card.StreamName {
+		return card.Attribution
+	}
+	return intel.Attribution(stream)
+}
+
+// ReadCards reads and validates the cards stream of a verified manifest:
+// every card strictly, ids ascending and unique, only published ones, the
+// count as the manifest states.
+func ReadCards(dir string, s *IntelStream) ([]*card.Card, error) {
+	var out []*card.Card
+	err := eachLine(filepath.Join(dir, s.File.Name), func(line []byte) error {
+		c, err := card.Decode(line)
+		if err != nil {
+			return err
+		}
+		if !c.Published() || (len(out) > 0 && out[len(out)-1].ID >= c.ID) {
+			return fmt.Errorf("intel: card %q is unpublished, repeated or out of order", c.ID)
+		}
+		if len(out) >= card.MaxCards {
+			return errors.New("intel: too many cards")
+		}
+		out = append(out, c)
+		return nil
+	})
+	if err == nil && len(out) != s.File.Records {
+		err = fmt.Errorf("intel: %d cards, the manifest says %d", len(out), s.File.Records)
 	}
 	return out, err
 }

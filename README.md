@@ -310,6 +310,54 @@ Guarantees:
   signed `attribution` of each stream. `vulnfeed build --intel=false` leaves the
   streams out.
 
+## Advisory cards
+
+What: a hand-written, reviewed, product-level statement about a
+vulnerability, published as the `cards` stream of the side manifest above.
+A card can exist before a CVE record or a CPE does, and groups the CVE ids of
+one story (one alert per organization and card on the platform).
+
+A card holds: an id (`OCA-YYYY-NNNN`), a revision, a title and nicknames,
+the affected products by catalog key (`part:vendor:product`), the affected
+and fixed versions per branch (or `not_published`), the configuration each
+vulnerability needs (a closed list: `http2_enabled`, `http3_enabled`,
+`mail_proxy_auth_http`, `resolver_runtime_dns`, `kernel_sctp_reachable`,
+`other` with a note), the exploitation status (`none`, `poc_public`,
+`weaponised`, `exploited_itw`, `vendor_confirmed_exploited`), links to public
+proof-of-concept write-ups (metadata only: nothing is downloaded or stored),
+workarounds and what each one blocks, detection ideas, the sources, the
+review record and a revision history. Every fact cites at least one source.
+Schema: `openctem.advisory-card/v1` (`internal/card`); the format grows only
+by optional fields while the contract stays v1.
+
+How a card is published:
+
+1. Write `cards/OCA-YYYY-NNNN.json` with `review.state` `in_review` and open a
+   pull request. CI runs `vulnfeed cards check cards`.
+2. A reviewer checks every fact against its cited source, then sets
+   `review.state` to `reviewed` with `reviewed_by`, `reviewed_at` and `mode`:
+   `two_person` (reviewer is not the author) or `single_review` (the author
+   reviewed it; allowed, and visible as such on every platform).
+3. `vulnfeed build --cards cards` publishes the reviewed and withdrawn cards in
+   the next release. Cards in review are never published.
+4. A correction is a new revision with a history note. A card is never
+   deleted: it is withdrawn (a new revision with `withdrawn_reason`), and a
+   platform closes its alerts with that reason.
+
+Checks before signing (`internal/card`):
+
+- strict JSON, at most 64 KiB per card and 2,000 cards;
+- ids, vulnerability ids (CVE, GHSA), product keys and versions by pattern;
+- display text without control, bidirectional or zero-width characters and
+  without markup brackets, within per-field caps; URLs absolute https without
+  credentials;
+- affected products and ranges need a vendor, CNA or CERT source, or two
+  publishers; `exploited_itw` and `vendor_confirmed_exploited` likewise;
+  `poc_public` and `weaponised` need at least one link;
+- a build refuses a card set that drops a published card, rolls a revision
+  back, or changes or withdraws a card without a new revision; the previous
+  release's cards are then carried forward.
+
 ## Vulnerability id alias map
 
 What: an optional signed map from an advisory id (a GHSA id, or an OSV

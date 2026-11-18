@@ -30,6 +30,9 @@ jobs:
           go test ./internal/model -run '^$' -fuzz '^FuzzValidVersion$' -fuzztime 20s
           go test ./internal/nvd -run '^$' -fuzz '^FuzzDecodePage$' -fuzztime 20s
           go test ./internal/cve5 -run '^$' -fuzz '^FuzzDecode$' -fuzztime 20s
+          go test ./internal/card -run '^$' -fuzz '^FuzzDecode$' -fuzztime 20s
+      - name: Advisory cards
+        run: go run ./cmd/vulnfeed cards check cards
       - name: Publish script
         run: bash .github/scripts/publish-release.test.sh
       - name: Known vulnerabilities

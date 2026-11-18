@@ -4,6 +4,7 @@
 //	vulnfeed build  --out DIR [--prev DIR] [--root-key-id ID] [--allow-mass-change] [--cve-list=false] [--nvd-min-interval D]
 //	vulnfeed sign   --dir DIR --keyset FILE --root-key-id ID     (key in $VULNFEED_SIGNING_KEY)
 //	vulnfeed verify --dir DIR --root-key-id ID [--applied N] [--allow-expired]
+//	vulnfeed cards check DIR
 //	vulnfeed keys root-init --out FILE
 //	vulnfeed keys gen --out FILE
 //	vulnfeed keys sign-keyset --root FILE --key PUBLIC_KEY [--key ...] --version N [--days 180] --out FILE
@@ -25,6 +26,7 @@ import (
 
 	"github.com/openctemio/vulnfeed/internal/alias"
 	"github.com/openctemio/vulnfeed/internal/bundle"
+	"github.com/openctemio/vulnfeed/internal/card"
 	"github.com/openctemio/vulnfeed/internal/collect"
 	"github.com/openctemio/vulnfeed/internal/cve5"
 	"github.com/openctemio/vulnfeed/internal/dsse"
@@ -47,7 +49,7 @@ func main() {
 
 func run(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: vulnfeed build|sign|verify|keys ...")
+		return errors.New("usage: vulnfeed build|sign|verify|cards|keys ...")
 	}
 	switch args[0] {
 	case "build":
@@ -58,6 +60,8 @@ func run(ctx context.Context, args []string) error {
 		return cmdVerify(args[1:])
 	case "keys":
 		return cmdKeys(args[1:])
+	case "cards":
+		return cmdCards(args[1:])
 	}
 	return fmt.Errorf("unknown command %q", args[0])
 }
@@ -74,6 +78,7 @@ func cmdBuild(ctx context.Context, args []string) error {
 	nvdEvery := fs.Duration("nvd-min-interval", 2*time.Hour, "read NVD changes at most this often (a build in between keeps NVD's cursor)")
 	cveList := fs.Bool("cve-list", true, "also read the CVE List (GitHub API token in $GITHUB_TOKEN raises the rate limit)")
 	intelOn := fs.Bool("intel", true, "also read CISA KEV and FIRST EPSS into the signed side manifest")
+	cardsDir := fs.String("cards", "", "directory of advisory cards (reviewed ones are published in the side manifest; empty: the previous release's cards are carried forward)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -145,7 +150,7 @@ func cmdBuild(ctx context.Context, args []string) error {
 	}
 	buildVulnIDs(ctx, *out, next.Sequence, prevVulnIDs, now)
 	if *intelOn {
-		buildIntel(ctx, *out, next.Sequence, *prevDir, prevIntel, now)
+		buildIntel(ctx, *out, next.Sequence, *prevDir, prevIntel, *cardsDir, now)
 	}
 	if err := bundle.CheckAssetCount(*out); err != nil {
 		return err
@@ -182,11 +187,17 @@ func buildVulnIDs(ctx context.Context, out string, sequence uint64, prev *bundle
 // buildIntel writes the optional KEV/EPSS side manifest. A source that cannot
 // be read or fails its checks is carried forward from the previous release
 // (with its older data date); a failure never fails the build.
-func buildIntel(ctx context.Context, out string, sequence uint64, prevDir string, prev *bundle.IntelManifest, now time.Time) {
+func buildIntel(ctx context.Context, out string, sequence uint64, prevDir string, prev *bundle.IntelManifest, cardsDir string, now time.Time) {
 	c := intel.NewClient()
 	c.Log = logf
 	var in bundle.IntelInput
 	var err error
+	if cardsDir != "" {
+		if in.Cards, err = publishedCards(cardsDir, prevDir, prev); err != nil {
+			logf("cards not published (the previous copy is carried forward): %v", err)
+			in.Cards = nil
+		}
+	}
 	if in.KEV, err = c.FetchKEV(ctx); err != nil {
 		logf("KEV not read (the previous copy is carried forward): %v", err)
 		in.KEV = nil
@@ -206,6 +217,7 @@ func buildIntel(ctx context.Context, out string, sequence uint64, prevDir string
 	if err != nil || m == nil {
 		_ = os.Remove(filepath.Join(out, bundle.IntelFileName(intel.StreamKEV)))
 		_ = os.Remove(filepath.Join(out, bundle.IntelFileName(intel.StreamEPSS)))
+		_ = os.Remove(filepath.Join(out, bundle.IntelFileName(card.StreamName)))
 		_ = os.Remove(filepath.Join(out, "intel.manifest.json"))
 		logf("KEV/EPSS manifest skipped (the release is published without it): %v", err)
 		return
@@ -213,6 +225,54 @@ func buildIntel(ctx context.Context, out string, sequence uint64, prevDir string
 	for _, s := range m.Streams {
 		logf("intel %s: %d records, data date %s, version %s", s.Name, s.File.Records, s.AsOf.Format(time.RFC3339), s.Version)
 	}
+}
+
+// publishedCards reads the cards directory and returns the cards to
+// publish (reviewed or withdrawn), refusing a set that drops or rolls back a
+// card the previous release published.
+func publishedCards(dir, prevDir string, prev *bundle.IntelManifest) ([]*card.Card, error) {
+	all, err := card.LoadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var pub []*card.Card
+	for _, c := range all {
+		if c.Published() {
+			pub = append(pub, c)
+		} else {
+			logf("card %s is %s: not published", c.ID, c.Review.State)
+		}
+	}
+	if s := prev.Stream(card.StreamName); s != nil {
+		old, err := bundle.ReadCards(prevDir, s)
+		if err != nil {
+			return nil, fmt.Errorf("previous cards: %w", err)
+		}
+		if err := card.CheckSuccessor(old, pub); err != nil {
+			return nil, err
+		}
+	}
+	if len(pub) == 0 {
+		return nil, errors.New("no reviewed card")
+	}
+	return pub, nil
+}
+
+// cmdCards validates a cards directory (the check a card pull request
+// runs): every card, published or still in review.
+func cmdCards(args []string) error {
+	if len(args) != 2 || args[0] != "check" {
+		return errors.New("usage: vulnfeed cards check DIR")
+	}
+	cs, err := card.LoadDir(args[1])
+	if err != nil {
+		return err
+	}
+	for _, c := range cs {
+		logf("%s r%d %s (%s, %d vulnerabilities): ok", c.ID, c.Revision, c.Review.State, c.Exploitation.Status, len(c.Vulns))
+	}
+	logf("%d cards valid", len(cs))
+	return nil
 }
 
 func cmdSign(args []string) error {
@@ -293,6 +353,12 @@ func cmdVerify(args []string) error {
 				n = len(e)
 			case intel.StreamEPSS:
 				e, err := bundle.ReadEPSS(*dir, s)
+				if err != nil {
+					return err
+				}
+				n = len(e)
+			case card.StreamName:
+				e, err := bundle.ReadCards(*dir, s)
 				if err != nil {
 					return err
 				}
