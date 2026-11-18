@@ -308,3 +308,145 @@ func TestOtherMetricVersionNumberOrString(t *testing.T) {
 		}
 	}
 }
+
+func loadF5(t *testing.T, id string) Record {
+	t.Helper()
+	b, err := os.ReadFile("testdata/f5/" + id + ".json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, ok, err := Decode(bytes.NewReader(b))
+	if err != nil || !ok {
+		t.Fatalf("%s: ok %v err %v", id, ok, err)
+	}
+	return rec
+}
+
+// inRange reports whether a plain dotted version v is inside the range.
+func inRange(t *testing.T, r model.Range, v string) bool {
+	t.Helper()
+	if r.Exact != "" {
+		c, ok := cmpVersion(v, r.Exact)
+		return ok && c == 0
+	}
+	if r.Start != "" {
+		c, ok := cmpVersion(v, r.Start)
+		if !ok || c < 0 || (c == 0 && !r.StartIncl) {
+			return false
+		}
+	}
+	if r.End != "" {
+		c, ok := cmpVersion(v, r.End)
+		if !ok || c > 0 || (c == 0 && !r.EndIncl) {
+			return false
+		}
+	}
+	return true
+}
+
+func matchedBy(t *testing.T, rec Record, product, v string) bool {
+	t.Helper()
+	for _, r := range rec.Ranges {
+		if r.Product == product && inRange(t, r, v) {
+			return true
+		}
+	}
+	return false
+}
+
+// The F5 records for NGINX list the fixed branches as bounded ranges and
+// one open-ended "and later" range that starts below them. The open range
+// must stop where the bounded ones begin, so the patched versions do not
+// match; the affected ones still do.
+func TestF5OpenEndedRangeIsCutAtFixedBranches(t *testing.T) {
+	const oss = "cpe:a:f5:nginx_open_source"
+	// The oldest affected version each record states.
+	for id, first := range map[string]string{
+		"CVE-2026-123007": "1.9.5",
+		"CVE-2026-123633": "1.19.7",
+		"CVE-2026-123634": "0.6.18",
+		"CVE-2026-121810": "1.25.09",
+		"CVE-2026-113425": "0.5.33",
+	} {
+		rec := loadF5(t, id)
+		for _, r := range rec.Ranges {
+			if r.Product == oss && r.Exact == "" && r.End == "" {
+				t.Errorf("%s: still an open-ended range %s", id, describe(r))
+			}
+		}
+		for _, v := range []string{"1.30.6", "1.30.0", "1.31.8", "1.31.0", "1.29.9", "1.26.0"} {
+			if v == "1.26.0" || v == "1.29.9" {
+				if c, _ := cmpVersion(v, first); c < 0 {
+					continue
+				}
+			}
+			if !matchedBy(t, rec, oss, v) {
+				t.Errorf("%s: affected %s not matched", id, v)
+			}
+		}
+		for _, v := range []string{"1.30.7", "1.30.8", "1.31.9", "1.31.10", "1.32.0", "2.0.0"} {
+			if matchedBy(t, rec, oss, v) {
+				t.Errorf("%s: patched %s matched", id, v)
+			}
+		}
+		if !matchedBy(t, rec, oss, first) {
+			t.Errorf("%s: first affected %s not matched", id, first)
+		}
+	}
+	rec := loadF5(t, "CVE-2026-123007")
+	if !matchedBy(t, rec, oss, "1.18.0") {
+		t.Error("1.18.0 is affected by CVE-2026-123007")
+	}
+	if matchedBy(t, rec, oss, "1.9.4") {
+		t.Error("1.9.4 is below the first affected version")
+	}
+	rec = loadF5(t, "CVE-2026-123633")
+	if matchedBy(t, rec, oss, "1.18.0") || !matchedBy(t, rec, oss, "1.19.7") {
+		t.Error("CVE-2026-123633 starts at 1.19.7")
+	}
+}
+
+// A release name that cannot be ordered against the bounded ranges (R33
+// against 37.x) drops the open range instead of keeping it wide.
+func TestF5PlusOpenRangeDroppedWhenNotComparable(t *testing.T) {
+	rec := loadF5(t, "CVE-2026-123633")
+	const plus = "cpe:a:f5:nginx_plus"
+	n := 0
+	for _, r := range rec.Ranges {
+		if r.Product != plus {
+			continue
+		}
+		n++
+		if r.End == "" {
+			t.Errorf("open-ended Plus range kept: %s", describe(r))
+		}
+	}
+	if n != 2 {
+		t.Fatalf("plus ranges %d, want the 2 bounded ones", n)
+	}
+}
+
+func TestClipOpenEnded(t *testing.T) {
+	r := func(start, end string) model.Range {
+		return model.Range{Product: "p", Start: start, StartIncl: start != "", End: end}
+	}
+	got := clipOpenEnded([]model.Range{r("2.0", "2.5"), r("1.0", ""), r("3.0", "3.4")})
+	if len(got) != 3 || got[1].End != "2.0" || got[1].EndIncl {
+		t.Fatalf("cut at the lowest bounded start above: %+v", got)
+	}
+	// No bounded sibling above: what the CNA states stays.
+	got = clipOpenEnded([]model.Range{r("1.0", ""), r("0.5", "0.9")})
+	if len(got) != 2 || got[0].End != "" {
+		t.Fatalf("no sibling above: %+v", got)
+	}
+	// An exact version above also ends it.
+	got = clipOpenEnded([]model.Range{r("1.0", ""), {Product: "p", Exact: "1.7"}})
+	if got[0].End != "1.7" {
+		t.Fatalf("exact sibling: %+v", got)
+	}
+	// Not comparable: dropped.
+	got = clipOpenEnded([]model.Range{r("R33", ""), r("37.0.0", "37.0.8.1")})
+	if len(got) != 1 || got[0].Start != "37.0.0" {
+		t.Fatalf("not comparable: %+v", got)
+	}
+}
