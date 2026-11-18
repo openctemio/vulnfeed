@@ -132,7 +132,7 @@
     {"id": "circl-tr105", "url": "https://www.circl.lu/pub/tr-105/", "publisher": "CIRCL", "tier": "cert", "title": "TR-105 NGINX2ROOT", "retrieved_at": "2026-11-18T18:00:00Z"}
   ],
   "review": {
-    "state": "in_review",
+    "state": "reported",
     "author": "0xmanhnv"
   },
   "history": [

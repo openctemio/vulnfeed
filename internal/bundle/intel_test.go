@@ -163,12 +163,12 @@ func TestIntelNothingToPublish(t *testing.T) {
 
 func testCards(t *testing.T) []*card.Card {
 	t.Helper()
-	cs, err := card.LoadDir("../../cards")
+	cs, err := card.LoadDir("../../cards", time.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range cs {
-		at := c.UpdatedAt.Add(time.Hour)
+		at := c.UpdatedAt
 		c.Review.State, c.Review.Mode, c.Review.ReviewedBy, c.Review.ReviewedAt = card.StateReviewed, card.ModeTwoPerson, "reviewer", &at
 	}
 	return cs
@@ -186,7 +186,7 @@ func TestIntelCardsRoundTrip(t *testing.T) {
 	if s == nil || s.Version != card.Schema || s.File.Records != len(cs) || !s.AsOf.Equal(CardsAsOf(cs)) || s.Attribution != card.Attribution {
 		t.Fatalf("%+v", s)
 	}
-	back, err := ReadCards(dir, s)
+	back, err := ReadCards(dir, s, time.Now())
 	if err != nil || len(back) != len(cs) || back[0].ID != cs[0].ID || len(back[0].Affected) != len(cs[0].Affected) {
 		t.Fatal(len(back), err)
 	}
@@ -210,7 +210,78 @@ func TestReadCardsRefusesUnpublished(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ReadCards(dir, got.Stream(card.StreamName)); err == nil {
+	if _, err := ReadCards(dir, got.Stream(card.StreamName), time.Now()); err == nil {
 		t.Fatal("a card in review was read as published")
+	}
+}
+
+// A card mis-dated by a reviewer (a wrong year) must never stop KEV and
+// EPSS: the platform refuses the whole manifest when one stream is dated
+// more than FutureSkew ahead.
+func TestIntelMisdatedCardKeepsKEV(t *testing.T) {
+	k := newKeys(t)
+	cs := testCards(t)
+	far := time.Date(2062, 11, 18, 10, 0, 0, 0, time.UTC)
+	cs[0].Review.ReviewedAt = &far // past Validate, as an older builder allowed
+	start := time.Now()
+	dir, _, _ := buildWithIntel(t, k, 9, IntelInput{KEV: testKEV(600, day1), Cards: cs}, "", nil)
+	got, err := VerifyIntel(dir, verifiedKeySet(t, k), 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := got.CheckDates(time.Now()); err != nil {
+		t.Fatalf("the platform would refuse the manifest: %v", err)
+	}
+	if s := got.Stream(card.StreamName); s == nil || s.AsOf.After(time.Now()) || s.AsOf.Before(start.Add(-time.Second)) {
+		t.Fatalf("cards data date not capped at the build time: %+v", s)
+	}
+	if s := got.Stream(intel.StreamKEV); s == nil || s.File.Records != 600 {
+		t.Fatal("KEV not published")
+	}
+}
+
+// A previous release whose cards stream is dated in the future (built
+// before the cap) is never carried forward nor used as the date baseline:
+// the next release publishes KEV and a fresh cards stream, and passes the
+// platform's rule.
+func TestIntelFutureStreamNeverCarried(t *testing.T) {
+	k := newKeys(t)
+	cs := testCards(t)
+	dir, _, _ := buildWithIntel(t, k, 9, IntelInput{KEV: testKEV(600, day1), Cards: cs}, "", nil)
+	prev, err := VerifyIntel(dir, verifiedKeySet(t, k), 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev.Stream(card.StreamName).AsOf = time.Date(2062, 11, 18, 10, 0, 0, 0, time.UTC)
+
+	// Without cards: the future stream is dropped, KEV still ships.
+	_, m, notes := buildWithIntel(t, k, 10, IntelInput{KEV: testKEV(600, day2)}, dir, prev)
+	if m.Stream(card.StreamName) != nil || !strings.Contains(strings.Join(notes, ";"), "in the future; not carried forward") {
+		t.Fatal(notes)
+	}
+	if m.Stream(intel.StreamKEV) == nil || m.CheckDates(time.Now()) != nil {
+		t.Fatal("KEV missing or the manifest would be refused")
+	}
+
+	// With corrected cards (an older date): published, not refused as
+	// older than the future baseline.
+	_, m, notes = buildWithIntel(t, k, 10, IntelInput{KEV: testKEV(600, day2), Cards: cs}, dir, prev)
+	if s := m.Stream(card.StreamName); s == nil || !s.AsOf.Equal(CardsAsOf(cs)) {
+		t.Fatal(notes)
+	}
+	if err := m.CheckDates(time.Now()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIntelCheckDates(t *testing.T) {
+	now := time.Now()
+	m := &IntelManifest{Streams: []IntelStream{{Name: intel.StreamKEV, AsOf: now.Add(FutureSkew - time.Minute)}}}
+	if err := m.CheckDates(now); err != nil {
+		t.Fatal(err)
+	}
+	m.Streams = append(m.Streams, IntelStream{Name: card.StreamName, AsOf: now.Add(FutureSkew + time.Minute)})
+	if err := m.CheckDates(now); err == nil {
+		t.Fatal("a stream past the platform's limit accepted")
 	}
 }

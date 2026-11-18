@@ -1,0 +1,3 @@
+# Advisory cards are signed and shipped to every platform. A change to a card
+# or to the reviewer allowlist (cards/REVIEWERS) needs a code-owner review.
+/cards/    @0xmanhnv

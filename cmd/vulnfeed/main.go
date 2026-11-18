@@ -193,7 +193,7 @@ func buildIntel(ctx context.Context, out string, sequence uint64, prevDir string
 	var in bundle.IntelInput
 	var err error
 	if cardsDir != "" {
-		if in.Cards, err = publishedCards(cardsDir, prevDir, prev); err != nil {
+		if in.Cards, err = publishedCards(cardsDir, prevDir, prev, now); err != nil {
 			logf("cards not published (the previous copy is carried forward): %v", err)
 			in.Cards = nil
 		}
@@ -230,9 +230,16 @@ func buildIntel(ctx context.Context, out string, sequence uint64, prevDir string
 // publishedCards reads the cards directory and returns the cards to
 // publish (reviewed or withdrawn), refusing a set that drops or rolls back a
 // card the previous release published.
-func publishedCards(dir, prevDir string, prev *bundle.IntelManifest) ([]*card.Card, error) {
-	all, err := card.LoadDir(dir)
+func publishedCards(dir, prevDir string, prev *bundle.IntelManifest, now time.Time) ([]*card.Card, error) {
+	all, err := card.LoadDir(dir, now)
 	if err != nil {
+		return nil, err
+	}
+	reviewers, err := card.LoadReviewers(filepath.Join(dir, card.ReviewersFile))
+	if err != nil {
+		return nil, err
+	}
+	if err := card.CheckReviewers(all, reviewers); err != nil {
 		return nil, err
 	}
 	var pub []*card.Card
@@ -243,8 +250,15 @@ func publishedCards(dir, prevDir string, prev *bundle.IntelManifest) ([]*card.Ca
 			logf("card %s is %s: not published", c.ID, c.Review.State)
 		}
 	}
-	if s := prev.Stream(card.StreamName); s != nil {
-		old, err := bundle.ReadCards(prevDir, s)
+	switch s := prev.Stream(card.StreamName); {
+	case s == nil:
+		// The pull request check compares every change with the base
+		// branch (cards check --base); here there is no release to compare.
+		logf("cards: the previous release has no cards stream; only the repository check guards against a dropped card")
+	case s.AsOf.After(now.Add(bundle.FutureSkew)):
+		logf("cards: the previous release's cards are dated in the future (platforms refused that manifest); not used as the baseline")
+	default:
+		old, err := bundle.ReadCards(prevDir, s, now)
 		if err != nil {
 			return nil, fmt.Errorf("previous cards: %w", err)
 		}
@@ -259,20 +273,58 @@ func publishedCards(dir, prevDir string, prev *bundle.IntelManifest) ([]*card.Ca
 }
 
 // cmdCards validates a cards directory (the check a card pull request
-// runs): every card, published or still in review.
+// runs): every card, published or still in review, every reviewer in the
+// allowlist, and with --base (the cards directory of the base branch) the
+// same successor rules the builder applies: no published card dropped,
+// rolled back or changed without a new revision.
 func cmdCards(args []string) error {
-	if len(args) != 2 || args[0] != "check" {
-		return errors.New("usage: vulnfeed cards check DIR")
+	if len(args) < 1 || args[0] != "check" {
+		return errors.New("usage: vulnfeed cards check [--base BASEDIR] DIR")
 	}
-	cs, err := card.LoadDir(args[1])
+	fs := flag.NewFlagSet("cards check", flag.ContinueOnError)
+	base := fs.String("base", "", "cards directory of the base branch")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	if fs.NArg() != 1 {
+		return errors.New("usage: vulnfeed cards check [--base BASEDIR] DIR")
+	}
+	dir := fs.Arg(0)
+	cs, err := card.LoadDir(dir, time.Now())
 	if err != nil {
 		return err
+	}
+	reviewers, err := card.LoadReviewers(filepath.Join(dir, card.ReviewersFile))
+	if err != nil {
+		return err
+	}
+	if err := card.CheckReviewers(cs, reviewers); err != nil {
+		return err
+	}
+	if *base != "" {
+		old, err := card.LoadDirUnchecked(*base)
+		if err != nil {
+			return fmt.Errorf("base cards: %w", err)
+		}
+		if err := card.CheckSuccessor(published(old), published(cs)); err != nil {
+			return err
+		}
 	}
 	for _, c := range cs {
 		logf("%s r%d %s (%s, %d vulnerabilities): ok", c.ID, c.Revision, c.Review.State, c.Exploitation.Status, len(c.Vulns))
 	}
 	logf("%d cards valid", len(cs))
 	return nil
+}
+
+func published(cs []*card.Card) []*card.Card {
+	var out []*card.Card
+	for _, c := range cs {
+		if c.Published() {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 func cmdSign(args []string) error {
@@ -341,6 +393,11 @@ func cmdVerify(args []string) error {
 		return err
 	}
 	if im != nil {
+		// The platform's rule: one stream dated in the future refuses the
+		// whole manifest, so such a release must never ship.
+		if err := im.CheckDates(time.Now()); err != nil {
+			return err
+		}
 		for i := range im.Streams {
 			s := &im.Streams[i]
 			var n int
@@ -358,7 +415,7 @@ func cmdVerify(args []string) error {
 				}
 				n = len(e)
 			case card.StreamName:
-				e, err := bundle.ReadCards(*dir, s)
+				e, err := bundle.ReadCards(*dir, s, time.Now())
 				if err != nil {
 					return err
 				}

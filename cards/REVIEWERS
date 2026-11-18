@@ -1,0 +1,5 @@
+# People allowed to review an advisory card: one GitHub handle per line.
+# The builder and the "Advisory cards" check refuse a reviewed or withdrawn
+# card whose review.reviewed_by is not listed here. cards/ is code-owned
+# (.github/CODEOWNERS): adding a reviewer needs a code-owner review.
+0xmanhnv

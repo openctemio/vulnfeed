@@ -66,6 +66,14 @@ type IntelManifest struct {
 	Streams   []IntelStream `json:"streams"`
 }
 
+// prevStreams is the streams of a manifest that may be nil.
+func prevStreams(m *IntelManifest) []IntelStream {
+	if m == nil {
+		return nil
+	}
+	return m.Streams
+}
+
 // Stream returns the named stream.
 func (m *IntelManifest) Stream(name string) *IntelStream {
 	if m == nil {
@@ -88,6 +96,24 @@ type IntelInput struct {
 	// when the build was not given a cards directory. They are already
 	// checked against the previous release (card.CheckSuccessor).
 	Cards []*card.Card
+}
+
+// FutureSkew is how far past its own clock a platform accepts a stream's
+// data date. A platform refuses the WHOLE intel manifest (every stream) when
+// one stream is dated later, so the builder never publishes or carries such
+// a stream, and `vulnfeed verify` applies the same rule.
+const FutureSkew = 48 * time.Hour
+
+// CheckDates applies the platform's rule to a verified manifest: no stream
+// may be dated later than now + FutureSkew.
+func (m *IntelManifest) CheckDates(now time.Time) error {
+	for _, s := range m.Streams {
+		if s.AsOf.After(now.Add(FutureSkew)) {
+			return fmt.Errorf("intel: stream %q has a data date in the future (%s); platforms would refuse the whole manifest",
+				s.Name, s.AsOf.Format(time.RFC3339))
+		}
+	}
+	return nil
 }
 
 // CardsAsOf is the data date of a set of cards: the newest revision or
@@ -149,7 +175,13 @@ func WriteIntel(dir string, sequence uint64, now time.Time, in IntelInput, prevD
 	}
 	if len(in.Cards) > 0 {
 		cs := in.Cards
-		cands = append(cands, fresh{name: card.StreamName, asOf: CardsAsOf(cs), version: card.Schema, n: len(cs), fill: func(enc *json.Encoder) error {
+		// The cards' dates are checked (card.MaxClockSkew); the stream's
+		// date is still never later than the build itself.
+		asOf := CardsAsOf(cs)
+		if asOf.After(now) {
+			asOf = now
+		}
+		cands = append(cands, fresh{name: card.StreamName, asOf: asOf, version: card.Schema, n: len(cs), fill: func(enc *json.Encoder) error {
 			for _, c := range cs {
 				if err := enc.Encode(c); err != nil {
 					return err
@@ -158,10 +190,27 @@ func WriteIntel(dir string, sequence uint64, now time.Time, in IntelInput, prevD
 			return nil
 		}})
 	}
+	// A previous stream dated in the future was refused by every platform
+	// (with its whole manifest): it is neither a baseline nor carried.
+	future := func(t time.Time) bool { return t.After(now.Add(FutureSkew)) }
 	done := map[string]bool{}
+	stale := map[string]bool{}
+	for _, s := range prevStreams(prev) {
+		if future(s.AsOf) {
+			stale[s.Name] = true
+			notes = append(notes, fmt.Sprintf("%s: the previous release's data date %s is in the future; not carried forward",
+				s.Name, s.AsOf.Format(time.RFC3339)))
+		}
+	}
 	for _, c := range cands {
 		old := prev.Stream(c.name)
+		if old != nil && future(old.AsOf) {
+			old = nil
+		}
 		switch {
+		case future(c.asOf):
+			notes = append(notes, fmt.Sprintf("%s: the source's data date %s is in the future; not published", c.name, c.asOf.Format(time.RFC3339)))
+			continue
 		case old != nil && c.asOf.Before(old.AsOf):
 			notes = append(notes, fmt.Sprintf("%s: the source's data date %s is older than the previous release's %s; carried forward",
 				c.name, c.asOf.Format(time.RFC3339), old.AsOf.Format(time.RFC3339)))
@@ -187,7 +236,7 @@ func WriteIntel(dir string, sequence uint64, now time.Time, in IntelInput, prevD
 	// not try).
 	if prev != nil {
 		for _, s := range prev.Streams {
-			if done[s.Name] {
+			if done[s.Name] || stale[s.Name] {
 				continue
 			}
 			if err := copyVerified(filepath.Join(prevDir, s.File.Name), filepath.Join(dir, s.File.Name), s.File); err != nil {
@@ -318,10 +367,10 @@ func attributionOf(stream string) string {
 // ReadCards reads and validates the cards stream of a verified manifest:
 // every card strictly, ids ascending and unique, only published ones, the
 // count as the manifest states.
-func ReadCards(dir string, s *IntelStream) ([]*card.Card, error) {
+func ReadCards(dir string, s *IntelStream, now time.Time) ([]*card.Card, error) {
 	var out []*card.Card
 	err := eachLine(filepath.Join(dir, s.File.Name), func(line []byte) error {
-		c, err := card.Decode(line)
+		c, err := card.Decode(line, now)
 		if err != nil {
 			return err
 		}

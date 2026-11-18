@@ -19,6 +19,7 @@ package card
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -62,9 +63,29 @@ const (
 	maxHistory   = 100
 )
 
+// MaxClockSkew is how far in the future a card date may be. A card is
+// written and reviewed by people at a known time; a later date is a typo
+// (for example a wrong year), and a future date would push the stream's
+// data date past what platforms accept, which refuses the whole signed
+// intel manifest (KEV and EPSS included) on every platform.
+const MaxClockSkew = time.Hour
+
+// ReviewersFile lists, one handle per line, the people allowed to review a
+// card. It lives in the cards directory, so its changes are code-owned like
+// the cards themselves.
+const ReviewersFile = "REVIEWERS"
+
 // Review states.
+//
+// reported is the corroborated fast lane: a card not yet reviewed by a
+// person, published because every fact cites a vendor, CNA or CERT source.
+// Platforms show it as "reported, not yet reviewed" and use it for alerts
+// only: no findings, no score from its exploitation status, no grouping of
+// the CVE alerts and no automatic scan. A person's review makes it
+// reviewed in a new revision.
 const (
 	StateInReview  = "in_review"
+	StateReported  = "reported"
 	StateReviewed  = "reviewed"
 	StateWithdrawn = "withdrawn"
 )
@@ -233,12 +254,16 @@ type Card struct {
 
 // Published reports whether the builder publishes the card.
 func (c *Card) Published() bool {
-	return c.Review.State == StateReviewed || c.Review.State == StateWithdrawn
+	switch c.Review.State {
+	case StateReported, StateReviewed, StateWithdrawn:
+		return true
+	}
+	return false
 }
 
 // Decode reads one card strictly: unknown fields, trailing data and
-// oversized input are refused.
-func Decode(raw []byte) (*Card, error) {
+// oversized input are refused. now bounds the card's dates (see Validate).
+func Decode(raw []byte, now time.Time) (*Card, error) {
 	if len(raw) > MaxCardBytes {
 		return nil, fmt.Errorf("card: %d bytes, over %d", len(raw), MaxCardBytes)
 	}
@@ -251,15 +276,21 @@ func Decode(raw []byte) (*Card, error) {
 	if dec.More() {
 		return nil, errors.New("card: trailing data")
 	}
-	return &c, c.Validate()
+	return &c, c.Validate(now)
 }
 
 // Validate checks every rule a card must meet before it can be published.
+// No date of the card may be later than now + MaxClockSkew.
 //
 //nolint:gocyclo // one check per rule, kept in one place on purpose
-func (c *Card) Validate() error {
+func (c *Card) Validate(now time.Time) error {
 	fail := func(format string, a ...any) error {
 		return fmt.Errorf("card %s: %s", c.ID, fmt.Sprintf(format, a...))
+	}
+	latest := now.Add(MaxClockSkew)
+	future := func(t time.Time) bool { return t.After(latest) }
+	if err := c.checkDates(future); err != nil {
+		return fail("%v", err)
 	}
 	switch {
 	case c.Schema != Schema:
@@ -311,14 +342,25 @@ func (c *Card) Validate() error {
 		}
 		src[s.ID] = s
 	}
+	// A reported card (fast lane, no person's review yet) stands only on
+	// first-hand sources: every fact cites a vendor, CNA or CERT document.
+	reported := c.Review.State == StateReported
 	cite := func(what string, ids []string) error {
 		if len(ids) == 0 {
 			return fail("%s cites no source", what)
 		}
+		firstHand := false
 		for _, id := range ids {
 			if src[id].ID == "" {
 				return fail("%s cites unknown source %q", what, id)
 			}
+			switch src[id].Tier {
+			case "vendor", "cna", "cert":
+				firstHand = true
+			}
+		}
+		if reported && !firstHand {
+			return fail("%s: a reported card needs a vendor, CNA or CERT source for every fact", what)
 		}
 		return nil
 	}
@@ -517,6 +559,35 @@ func (c *Card) Validate() error {
 	return nil
 }
 
+// checkDates refuses a date in the future (see MaxClockSkew). first_seen is
+// a day, written in the author's time zone, so it gets one more day.
+func (c *Card) checkDates(future func(time.Time) bool) error {
+	switch {
+	case future(c.PublishedAt):
+		return errors.New("published_at is in the future")
+	case future(c.UpdatedAt):
+		return errors.New("updated_at is in the future")
+	case c.Review.ReviewedAt != nil && future(*c.Review.ReviewedAt):
+		return errors.New("review.reviewed_at is in the future")
+	}
+	for i, h := range c.History {
+		if future(h.At) {
+			return fmt.Errorf("history[%d].at is in the future", i)
+		}
+	}
+	for _, s := range c.Sources {
+		if future(s.RetrievedAt) {
+			return fmt.Errorf("source %s: retrieved_at is in the future", s.ID)
+		}
+	}
+	for i, l := range c.PoC {
+		if d, err := time.Parse("2006-01-02", l.FirstSeen); err == nil && future(d.Add(-24*time.Hour)) {
+			return fmt.Errorf("poc[%d]: first_seen is in the future", i)
+		}
+	}
+	return nil
+}
+
 func (c *Card) validateReview() error {
 	r := c.Review
 	if !handleRe.MatchString(r.Author) {
@@ -534,14 +605,14 @@ func (c *Card) validateReview() error {
 		}
 	}
 	switch r.State {
-	case StateInReview:
-		if r.ReviewedBy != "" || r.ReviewedAt != nil || r.Mode != "" {
-			return errors.New("a card in review has no reviewer yet")
+	case StateInReview, StateReported:
+		if r.ReviewedBy != "" || r.ReviewedAt != nil || r.Mode != "" || r.WithdrawnReason != "" {
+			return fmt.Errorf("a %s card has no reviewer yet", r.State)
 		}
 		return nil
 	case StateReviewed, StateWithdrawn:
 	default:
-		return errors.New("review.state must be in_review, reviewed or withdrawn")
+		return errors.New("review.state must be in_review, reported, reviewed or withdrawn")
 	}
 	switch {
 	case !handleRe.MatchString(r.ReviewedBy) || r.ReviewedAt == nil || r.ReviewedAt.Before(c.UpdatedAt):
@@ -578,9 +649,23 @@ func (r Range) validate() error {
 }
 
 // text checks a display string: valid UTF-8, within its cap, no control,
-// bidirectional-override or zero-width characters, no markup brackets. Card
-// text is shown to people; it must not be able to restyle or hide anything.
+// bidirectional-override, zero-width, line or paragraph separator
+// characters, no markup brackets and no link (a scheme or a www. host).
+// Card text is shown to people and reaches chat titles; it must not be able
+// to restyle or hide anything, and links come only from the vetted url
+// fields.
 func text(field, s string, maxLen int, required bool) error {
+	if err := plain(field, s, maxLen, required); err != nil {
+		return err
+	}
+	if l := strings.ToLower(s); strings.Contains(l, "://") || strings.Contains(l, "www.") {
+		return fmt.Errorf("%s holds a link; put links only in url fields", field)
+	}
+	return nil
+}
+
+// plain is text without the link rule (for url fields themselves).
+func plain(field, s string, maxLen int, required bool) error {
 	if s == "" {
 		if required {
 			return fmt.Errorf("%s is required", field)
@@ -595,7 +680,7 @@ func text(field, s string, maxLen int, required bool) error {
 	}
 	for _, r := range s {
 		switch {
-		case unicode.IsControl(r), unicode.Is(unicode.Cf, r):
+		case unicode.IsControl(r), unicode.Is(unicode.Cf, r), unicode.Is(unicode.Zl, r), unicode.Is(unicode.Zp, r):
 			return fmt.Errorf("%s holds a control or format character (U+%04X)", field, r)
 		case r == '<' || r == '>':
 			return fmt.Errorf("%s holds a markup bracket", field)
@@ -612,15 +697,32 @@ func httpsURL(raw string) error {
 	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.Opaque != "" {
 		return fmt.Errorf("url %q must be an absolute https URL without credentials", raw)
 	}
-	return text("url", raw, maxURL, true)
+	return plain("url", raw, maxURL, true)
 }
 
 // ExploitationRank orders statuses (none = 0).
 func ExploitationRank(s string) int { return slices.Index(Exploitations(), s) }
 
 // LoadDir reads every *.json card of dir, sorted by id. Every card is
-// validated; a file whose name is not its id is refused.
-func LoadDir(dir string) ([]*Card, error) {
+// validated against now; a file whose name is not its id is refused.
+func LoadDir(dir string, now time.Time) ([]*Card, error) {
+	return loadDir(dir, func(raw []byte) (*Card, error) { return Decode(raw, now) })
+}
+
+// LoadDirUnchecked reads the cards of dir without validating them: the
+// baseline of a successor check (a card the base branch published must not
+// disappear even when a newer rule would refuse it today).
+func LoadDirUnchecked(dir string) ([]*Card, error) {
+	return loadDir(dir, func(raw []byte) (*Card, error) {
+		var c Card
+		if err := json.Unmarshal(raw, &c); err != nil {
+			return nil, fmt.Errorf("card: %w", err)
+		}
+		return &c, nil
+	})
+}
+
+func loadDir(dir string, decode func([]byte) (*Card, error)) ([]*Card, error) {
 	names, err := filepath.Glob(filepath.Join(dir, "*.json"))
 	if err != nil {
 		return nil, err
@@ -642,7 +744,7 @@ func LoadDir(dir string) ([]*Card, error) {
 		if err != nil {
 			return nil, err
 		}
-		c, err := Decode(raw)
+		c, err := decode(raw)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", filepath.Base(n), err)
 		}
@@ -658,7 +760,10 @@ func LoadDir(dir string) ([]*Card, error) {
 
 // CheckSuccessor refuses a set of published cards that would hide what the
 // previous release said: a card may be withdrawn (it stays, with its
-// reason) but never dropped, and its revision never goes back.
+// reason) but never dropped, and its revision never goes back. At an equal
+// revision the card must be byte-identical (canonical JSON): any change,
+// a withdrawal included, needs a new revision. A new revision moves
+// updated_at forward and records it as the last history entry.
 func CheckSuccessor(prev, next []*Card) error {
 	byID := map[string]*Card{}
 	for _, c := range next {
@@ -671,8 +776,79 @@ func CheckSuccessor(prev, next []*Card) error {
 			return fmt.Errorf("cards: %s was published before and is missing; withdraw it instead of deleting it", p.ID)
 		case n.Revision < p.Revision:
 			return fmt.Errorf("cards: %s revision %d is older than the published %d", p.ID, n.Revision, p.Revision)
-		case n.Revision == p.Revision && (!n.UpdatedAt.Equal(p.UpdatedAt) || n.Review.State != p.Review.State):
-			return fmt.Errorf("cards: %s changed (or was withdrawn) without a new revision", p.ID)
+		case n.Revision == p.Revision:
+			same, err := sameContent(p, n)
+			if err != nil {
+				return err
+			}
+			if !same {
+				return fmt.Errorf("cards: %s changed (or was withdrawn) without a new revision", p.ID)
+			}
+		case !n.UpdatedAt.After(p.UpdatedAt):
+			return fmt.Errorf("cards: %s revision %d must move updated_at past the published %s", p.ID, n.Revision, p.UpdatedAt.Format(time.RFC3339))
+		case len(n.History) == 0 || !n.History[len(n.History)-1].At.Equal(n.UpdatedAt):
+			return fmt.Errorf("cards: %s revision %d: the last history entry must be dated updated_at", p.ID, n.Revision)
+		}
+	}
+	return nil
+}
+
+// sameContent compares two cards by the SHA-256 of their canonical JSON
+// (the encoding the stream publishes).
+func sameContent(a, b *Card) (bool, error) {
+	ha, err := Digest(a)
+	if err != nil {
+		return false, err
+	}
+	hb, err := Digest(b)
+	if err != nil {
+		return false, err
+	}
+	return ha == hb, nil
+}
+
+// Digest is the SHA-256 of the card's canonical JSON.
+func Digest(c *Card) ([32]byte, error) {
+	raw, err := json.Marshal(c)
+	if err != nil {
+		return [32]byte{}, fmt.Errorf("card %s: %w", c.ID, err)
+	}
+	return sha256.Sum256(raw), nil
+}
+
+// LoadReviewers reads the reviewer allowlist: one handle per line, blank
+// lines and lines starting with # ignored. A missing file is an error: the
+// builder never publishes a reviewed card without the list.
+func LoadReviewers(path string) (map[string]bool, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reviewers: %w", err)
+	}
+	if len(raw) > 64<<10 {
+		return nil, errors.New("reviewers: file too large")
+	}
+	out := map[string]bool{}
+	for i, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if !handleRe.MatchString(line) {
+			return nil, fmt.Errorf("reviewers: line %d is not a handle", i+1)
+		}
+		out[strings.ToLower(line)] = true
+	}
+	return out, nil
+}
+
+// CheckReviewers refuses a reviewed or withdrawn card whose reviewer is not
+// in the allowlist. The review record in a card is written by its author;
+// only the code-owned allowlist turns a handle into a reviewer. A reported
+// card names no reviewer.
+func CheckReviewers(cards []*Card, reviewers map[string]bool) error {
+	for _, c := range cards {
+		if (c.Review.State == StateReviewed || c.Review.State == StateWithdrawn) && !reviewers[strings.ToLower(c.Review.ReviewedBy)] {
+			return fmt.Errorf("card %s: reviewer %q is not in %s", c.ID, c.Review.ReviewedBy, ReviewersFile)
 		}
 	}
 	return nil
