@@ -53,8 +53,8 @@ func TestValidateRefusals(t *testing.T) {
 		"javascript url":          func(c *Card) { c.PoC[0].URL = "javascript:alert(1)" },
 		"credentials in url":      func(c *Card) { c.PoC[0].URL = "https://u:p@example.com/" },
 		"markup in text":          func(c *Card) { c.Title = "nginx <script>alert(1)</script>" },
-		"bidi override":           func(c *Card) { c.Summary = "safe ‮ txt.exe" },
-		"zero width":              func(c *Card) { c.Nicknames = []string{"NGINX​2Root"} },
+		"bidi override":           func(c *Card) { c.Summary = "safe \u202e txt.exe" },
+		"zero width":              func(c *Card) { c.Nicknames = []string{"NGINX\u200b2Root"} },
 		"newline":                 func(c *Card) { c.Workarounds[0].Text = "a\nb" },
 		"long title":              func(c *Card) { c.Title = strings.Repeat("x", maxTitle+1) },
 		"unknown predicate":       func(c *Card) { c.Affected[0].Conditions = []Condition{{Predicate: "anything_goes"}} },
@@ -71,7 +71,7 @@ func TestValidateRefusals(t *testing.T) {
 			c.Vulns = append(c.Vulns, Vuln{ID: "CVE-2026-0001", Title: "x", Sources: []string{"circl-tr105"}})
 		},
 		"bad vuln id":       func(c *Card) { c.Vulns[0].ID = "CVE-26-1" },
-		"bad exploitation":  func(c *Card) { c.Exploitation.Status = "rumoured" },
+		"bad exploitation":  func(c *Card) { c.Exploitation.Status = "guessed" },
 		"poc without links": func(c *Card) { c.PoC = nil },
 		"itw on a blog only": func(c *Card) {
 			c.Exploitation.Status = ExploitInTheWild
