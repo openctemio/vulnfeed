@@ -12,6 +12,9 @@
 
 cpe     a:nginx:nginx                         a:f5:nginx
 cpe     a:igor_sysoev:nginx                   a:f5:nginx
+# F5 names the open source product "NGINX Open Source" in its CNA records
+# (and "NGINX Plus" separately, which already equals the NVD product).
+cpe     a:f5:nginx_open_source                a:f5:nginx
 cpe     a:microsoft:iis                       a:microsoft:internet_information_services
 cpe     a:mortbay:jetty                       a:eclipse:jetty
 cpe     a:mysql:mysql                         a:oracle:mysql

@@ -268,3 +268,19 @@ func TestVariants(t *testing.T) {
 		t.Errorf("%+v", st)
 	}
 }
+
+// F5 names its product "NGINX Open Source" in CNA records; the reviewed
+// entry joins it to the curated product platform assets use.
+func TestCuratedNginxOpenSourceResolves(t *testing.T) {
+	d, err := Build(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, basis, ok := d.Resolve("a:f5:nginx_open_source")
+	if !ok || got != "a:f5:nginx" || basis != BasisCurated {
+		t.Fatalf("resolve: %q %q %v", got, basis, ok)
+	}
+	if got, _, ok := d.Resolve("a:f5:nginx_plus"); ok && got != "a:f5:nginx_plus" {
+		t.Fatalf("plus must stay itself: %q", got)
+	}
+}

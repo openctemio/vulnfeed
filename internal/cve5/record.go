@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -477,12 +478,105 @@ func (rec *Record) addAffected(id string, a affectedJSON) {
 				ranges = append(ranges, r)
 			}
 		}
+		ranges = clipOpenEnded(ranges)
 		if len(ranges) == 0 {
 			continue
 		}
 		rec.Products[t.product.Key] = t.product
 		rec.Ranges = append(rec.Ranges, ranges...)
 	}
+}
+
+// clipOpenEnded cuts an open-ended range ("1.19.7 and later") of one item
+// where a bounded range of the same item starts above it. Vendors list the
+// fixed branches as bounded ranges (1.31.0 to below 1.31.9) next to one
+// open-ended "and later" range; left as it is, the open range also covers
+// the patched versions of those branches. The cut is exclusive at the
+// lowest start (or exact version) of a bounded sibling above the open
+// start. When the versions cannot be compared (a release name such as R33
+// against a number), the open range is dropped: it is never kept wide.
+// An open range with no bounded sibling above it is what the CNA states
+// and stays.
+func clipOpenEnded(ranges []model.Range) []model.Range {
+	var out []model.Range
+	for _, r := range ranges {
+		if r.Exact != "" || r.End != "" || r.Start == "" {
+			out = append(out, r)
+			continue
+		}
+		cut, drop := "", false
+		for _, s := range ranges {
+			b := s.Start
+			if s.Exact != "" {
+				b = s.Exact
+			}
+			if b == "" || (s.Exact == "" && s.End == "") || b == r.Start {
+				continue
+			}
+			c, ok := cmpVersion(b, r.Start)
+			switch {
+			case !ok:
+				drop = true
+			case c > 0 && (cut == "" || lessVersion(b, cut)):
+				cut = b
+			}
+		}
+		if drop {
+			continue
+		}
+		if cut != "" {
+			r.End, r.EndIncl = cut, false
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
+func lessVersion(a, b string) bool {
+	c, ok := cmpVersion(a, b)
+	return ok && c < 0
+}
+
+// cmpVersion compares two dotted numeric versions (an optional leading v).
+// ok is false when either has a non-numeric part.
+func cmpVersion(a, b string) (int, bool) {
+	pa, oka := numericParts(a)
+	pb, okb := numericParts(b)
+	if !oka || !okb {
+		return 0, false
+	}
+	for i := 0; i < len(pa) || i < len(pb); i++ {
+		var x, y uint64
+		if i < len(pa) {
+			x = pa[i]
+		}
+		if i < len(pb) {
+			y = pb[i]
+		}
+		if x != y {
+			if x < y {
+				return -1, true
+			}
+			return 1, true
+		}
+	}
+	return 0, true
+}
+
+func numericParts(v string) ([]uint64, bool) {
+	v = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(v)), "v")
+	if v == "" {
+		return nil, false
+	}
+	var out []uint64
+	for _, s := range strings.Split(v, ".") {
+		n, err := strconv.ParseUint(s, 10, 32)
+		if err != nil {
+			return nil, false
+		}
+		out = append(out, n)
+	}
+	return out, true
 }
 
 // hasCarveOuts reports whether an item states unaffected (or unknown)
