@@ -25,6 +25,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/openctemio/vulnfeed/internal/card"
 	"github.com/openctemio/vulnfeed/internal/dsse"
 	"github.com/openctemio/vulnfeed/internal/intel"
 )
@@ -65,6 +66,14 @@ type IntelManifest struct {
 	Streams   []IntelStream `json:"streams"`
 }
 
+// prevStreams is the streams of a manifest that may be nil.
+func prevStreams(m *IntelManifest) []IntelStream {
+	if m == nil {
+		return nil
+	}
+	return m.Streams
+}
+
 // Stream returns the named stream.
 func (m *IntelManifest) Stream(name string) *IntelStream {
 	if m == nil {
@@ -83,6 +92,43 @@ func (m *IntelManifest) Stream(name string) *IntelStream {
 type IntelInput struct {
 	KEV  *intel.KEV
 	EPSS *intel.EPSS
+	// Cards are the published (reviewed or withdrawn) advisory cards, nil
+	// when the build was not given a cards directory. They are already
+	// checked against the previous release (card.CheckSuccessor).
+	Cards []*card.Card
+}
+
+// FutureSkew is how far past its own clock a platform accepts a stream's
+// data date. A platform refuses the WHOLE intel manifest (every stream) when
+// one stream is dated later, so the builder never publishes or carries such
+// a stream, and `vulnfeed verify` applies the same rule.
+const FutureSkew = 48 * time.Hour
+
+// CheckDates applies the platform's rule to a verified manifest: no stream
+// may be dated later than now + FutureSkew.
+func (m *IntelManifest) CheckDates(now time.Time) error {
+	for _, s := range m.Streams {
+		if s.AsOf.After(now.Add(FutureSkew)) {
+			return fmt.Errorf("intel: stream %q has a data date in the future (%s); platforms would refuse the whole manifest",
+				s.Name, s.AsOf.Format(time.RFC3339))
+		}
+	}
+	return nil
+}
+
+// CardsAsOf is the data date of a set of cards: the newest revision or
+// review among them.
+func CardsAsOf(cards []*card.Card) time.Time {
+	var t time.Time
+	for _, c := range cards {
+		if c.UpdatedAt.After(t) {
+			t = c.UpdatedAt
+		}
+		if c.Review.ReviewedAt != nil && c.Review.ReviewedAt.After(t) {
+			t = *c.Review.ReviewedAt
+		}
+	}
+	return t.UTC()
 }
 
 // WriteIntel writes the entries files and the unsigned manifest into dir.
@@ -127,15 +173,50 @@ func WriteIntel(dir string, sequence uint64, now time.Time, in IntelInput, prevD
 			return nil
 		}})
 	}
+	if len(in.Cards) > 0 {
+		cs := in.Cards
+		// The cards' dates are checked (card.MaxClockSkew); the stream's
+		// date is still never later than the build itself.
+		asOf := CardsAsOf(cs)
+		if asOf.After(now) {
+			asOf = now
+		}
+		cands = append(cands, fresh{name: card.StreamName, asOf: asOf, version: card.Schema, n: len(cs), fill: func(enc *json.Encoder) error {
+			for _, c := range cs {
+				if err := enc.Encode(c); err != nil {
+					return err
+				}
+			}
+			return nil
+		}})
+	}
+	// A previous stream dated in the future was refused by every platform
+	// (with its whole manifest): it is neither a baseline nor carried.
+	future := func(t time.Time) bool { return t.After(now.Add(FutureSkew)) }
 	done := map[string]bool{}
+	stale := map[string]bool{}
+	for _, s := range prevStreams(prev) {
+		if future(s.AsOf) {
+			stale[s.Name] = true
+			notes = append(notes, fmt.Sprintf("%s: the previous release's data date %s is in the future; not carried forward",
+				s.Name, s.AsOf.Format(time.RFC3339)))
+		}
+	}
 	for _, c := range cands {
 		old := prev.Stream(c.name)
+		if old != nil && future(old.AsOf) {
+			old = nil
+		}
 		switch {
+		case future(c.asOf):
+			notes = append(notes, fmt.Sprintf("%s: the source's data date %s is in the future; not published", c.name, c.asOf.Format(time.RFC3339)))
+			continue
 		case old != nil && c.asOf.Before(old.AsOf):
 			notes = append(notes, fmt.Sprintf("%s: the source's data date %s is older than the previous release's %s; carried forward",
 				c.name, c.asOf.Format(time.RFC3339), old.AsOf.Format(time.RFC3339)))
 			continue
-		case old != nil:
+		case old != nil && c.name != card.StreamName:
+			// Cards never shrink: card.CheckSuccessor refused a dropped one.
 			if err := intel.CheckShrink(c.name, c.n, old.File.Records); err != nil {
 				notes = append(notes, err.Error()+"; carried forward")
 				continue
@@ -147,7 +228,7 @@ func WriteIntel(dir string, sequence uint64, now time.Time, in IntelInput, prevD
 		}
 		f.Name, f.Records = IntelFileName(c.name), c.n
 		m.Streams = append(m.Streams, IntelStream{Name: c.name, AsOf: c.asOf.UTC(), FetchedAt: now, Version: c.version,
-			Attribution: intel.Attribution(c.name), File: f})
+			Attribution: attributionOf(c.name), File: f})
 		done[c.name] = true
 	}
 	// Carry forward every stream of the previous release that was not
@@ -155,7 +236,7 @@ func WriteIntel(dir string, sequence uint64, now time.Time, in IntelInput, prevD
 	// not try).
 	if prev != nil {
 		for _, s := range prev.Streams {
-			if done[s.Name] {
+			if done[s.Name] || stale[s.Name] {
 				continue
 			}
 			if err := copyVerified(filepath.Join(prevDir, s.File.Name), filepath.Join(dir, s.File.Name), s.File); err != nil {
@@ -272,6 +353,38 @@ func ReadEPSS(dir string, s *IntelStream) ([]intel.EPSSEntry, error) {
 	})
 	if err == nil && len(out) != s.File.Records {
 		err = fmt.Errorf("intel: %d epss entries, the manifest says %d", len(out), s.File.Records)
+	}
+	return out, err
+}
+
+func attributionOf(stream string) string {
+	if stream == card.StreamName {
+		return card.Attribution
+	}
+	return intel.Attribution(stream)
+}
+
+// ReadCards reads and validates the cards stream of a verified manifest:
+// every card strictly, ids ascending and unique, only published ones, the
+// count as the manifest states.
+func ReadCards(dir string, s *IntelStream, now time.Time) ([]*card.Card, error) {
+	var out []*card.Card
+	err := eachLine(filepath.Join(dir, s.File.Name), func(line []byte) error {
+		c, err := card.Decode(line, now)
+		if err != nil {
+			return err
+		}
+		if !c.Published() || (len(out) > 0 && out[len(out)-1].ID >= c.ID) {
+			return fmt.Errorf("intel: card %q is unpublished, repeated or out of order", c.ID)
+		}
+		if len(out) >= card.MaxCards {
+			return errors.New("intel: too many cards")
+		}
+		out = append(out, c)
+		return nil
+	})
+	if err == nil && len(out) != s.File.Records {
+		err = fmt.Errorf("intel: %d cards, the manifest says %d", len(out), s.File.Records)
 	}
 	return out, err
 }

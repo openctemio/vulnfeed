@@ -16,6 +16,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -30,7 +31,29 @@ jobs:
           go test ./internal/model -run '^$' -fuzz '^FuzzValidVersion$' -fuzztime 20s
           go test ./internal/nvd -run '^$' -fuzz '^FuzzDecodePage$' -fuzztime 20s
           go test ./internal/cve5 -run '^$' -fuzz '^FuzzDecode$' -fuzztime 20s
+          go test ./internal/card -run '^$' -fuzz '^FuzzDecode$' -fuzztime 20s
+      # Advisory cards (part of the required test check): every card valid,
+      # every reviewer in cards/REVIEWERS, no card file deleted, and no
+      # published card dropped, rolled back or changed without a new
+      # revision compared with the base branch.
+      - name: Advisory cards
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          base_dir="$RUNNER_TEMP/base"
+          mkdir -p "$base_dir/cards"
+          if [ -n "$BASE" ] && [ "$BASE" != 0000000000000000000000000000000000000000 ] && git cat-file -e "$BASE:cards" 2>/dev/null; then
+            deleted=$(git diff --no-renames --name-only --diff-filter=D "$BASE" HEAD -- cards/)
+            if [ -n "$deleted" ]; then
+              echo "::error::a card file must never be deleted (withdraw the card in a new revision): $deleted"
+              exit 1
+            fi
+            git archive "$BASE" cards | tar -x -C "$base_dir"
+          fi
+          go run ./cmd/vulnfeed cards check --base "$base_dir/cards" cards
       - name: Publish script
         run: bash .github/scripts/publish-release.test.sh
       - name: Known vulnerabilities
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+

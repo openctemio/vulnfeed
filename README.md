@@ -310,6 +310,78 @@ Guarantees:
   signed `attribution` of each stream. `vulnfeed build --intel=false` leaves the
   streams out.
 
+## Advisory cards
+
+What: a hand-written, reviewed, product-level statement about a
+vulnerability, published as the `cards` stream of the side manifest above.
+A card can exist before a CVE record or a CPE does, and groups the CVE ids of
+one story (one alert per organization and card on the platform).
+
+A card holds: an id (`OCA-YYYY-NNNN`), a revision, a title and nicknames,
+the affected products by catalog key (`part:vendor:product`), the affected
+and fixed versions per branch (or `not_published`), the configuration each
+vulnerability needs (a closed list: `http2_enabled`, `http3_enabled`,
+`mail_proxy_auth_http`, `resolver_runtime_dns`, `kernel_sctp_reachable`,
+`other` with a note), the exploitation status (`none`, `poc_public`,
+`weaponised`, `exploited_itw`, `vendor_confirmed_exploited`), links to public
+proof-of-concept write-ups (metadata only: nothing is downloaded or stored),
+workarounds and what each one blocks, detection ideas, the sources, the
+review record and a revision history. Every fact cites at least one source.
+Schema: `openctem.advisory-card/v1` (`internal/card`); the format grows only
+by optional fields while the contract stays v1.
+
+How a card is published:
+
+1. Write `cards/OCA-YYYY-NNNN.json` with `review.state` `in_review` and open a
+   pull request. The "Advisory cards" check runs
+   `vulnfeed cards check --base <base branch cards> cards`.
+2. Fast lane: when every fact cites a vendor, CNA or CERT source, the card may
+   ship as `reported` (no reviewer fields). Platforms show it as "reported,
+   not yet reviewed" and use it for alerts only: no findings, no score from
+   its exploitation status, no grouping of the CVE alerts and no automatic
+   scan.
+3. A reviewer checks every fact against its cited source, then sets
+   `review.state` to `reviewed` with `reviewed_by`, `reviewed_at` and `mode`:
+   `two_person` (reviewer is not the author) or `single_review` (the author
+   reviewed it; allowed, and visible as such on every platform). The reviewer
+   must be listed in `cards/REVIEWERS`; the builder and the check refuse any
+   other handle. `cards/` (the cards and the allowlist) is code-owned
+   (`.github/CODEOWNERS`).
+4. `vulnfeed build --cards cards` publishes the reported, reviewed and
+   withdrawn cards in the next release. Cards in review are never published.
+5. A correction is a new revision with a history note. A card is never
+   deleted: it is withdrawn (a new revision with `withdrawn_reason`), and a
+   platform closes its alerts with that reason.
+
+Checks before signing (`internal/card`):
+
+- strict JSON, at most 64 KiB per card and 2,000 cards;
+- ids, vulnerability ids (CVE, GHSA), product keys and versions by pattern;
+- display text without control, bidirectional, zero-width, line or
+  paragraph separator characters, without markup brackets and without links
+  (`://`, `www.`), within per-field caps; links only in `url` fields, absolute
+  https without credentials;
+- no date later than the build time plus one hour (a mistyped year would
+  otherwise date the stream in the future, and platforms refuse a manifest
+  with a stream dated more than 48 hours ahead); the stream's data date is
+  capped at the build time, `vulnfeed verify` applies the platform's 48-hour
+  rule, and a previous stream dated in the future is never carried forward;
+- affected products and ranges need a vendor, CNA or CERT source, or two
+  publishers; `exploited_itw` and `vendor_confirmed_exploited` likewise;
+  `poc_public` and `weaponised` need at least one link;
+- a build (against the previous release) and the pull request check
+  (against the base branch) refuse a card set that drops a published card,
+  rolls a revision back, or changes or withdraws a card without a new
+  revision: at an equal revision the card must be byte-identical (canonical
+  JSON), and a new revision moves `updated_at` forward and records it as the
+  last history entry; the previous release's cards are then carried forward.
+
+Planned: a card whose every fact comes from structured, signed or
+authoritative machine-readable vendor data (CSAF, OSV or GHSA records with
+explicit ranges) may be published as reviewed by rule, recorded as such and
+never as a person. Facts taken from free text keep needing a person's
+review.
+
 ## Vulnerability id alias map
 
 What: an optional signed map from an advisory id (a GHSA id, or an OSV

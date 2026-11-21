@@ -1,0 +1,141 @@
+{
+  "schema": "openctem.advisory-card/v1",
+  "id": "OCA-2026-0001",
+  "revision": 1,
+  "title": "nginx: five memory-safety flaws, unauthenticated code execution demonstrated",
+  "nicknames": ["NGINX2Root"],
+  "summary": "Five nginx vulnerabilities in HTTP/2, HTTP/3, the resolver and the mail proxy, fixed in nginx 1.31.9 (mainline) and 1.30.7 (stable). Each needs a specific configuration. The finders demonstrated unauthenticated remote code execution in a research setting. NGINX Plus is affected too; the CNA records also list NGINX Plus R33 and earlier. CIRCL also describes a Linux SCTP privilege escalation without a CVE id; it is not part of this card.",
+  "published_at": "2026-11-18T15:00:00Z",
+  "updated_at": "2026-11-18T18:00:00Z",
+  "severity": {
+    "level": "critical",
+    "note": "CNA score CVSS 4.0 9.2 CRITICAL for each of the five (CVSS 3.1 8.1 HIGH).",
+    "sources": ["cve-2026-123007", "cve-2026-123633", "cve-2026-123634", "cve-2026-121810", "cve-2026-113425"]
+  },
+  "vulns": [
+    {"id": "CVE-2026-113425", "title": "Use-after-free in mail proxy module", "sources": ["nginx-advisories", "cve-2026-113425"]},
+    {"id": "CVE-2026-121810", "title": "Use-after-free in HTTP/3", "sources": ["nginx-advisories", "cve-2026-121810"]},
+    {"id": "CVE-2026-123007", "title": "Memory corruption in HTTP/2 flow control", "sources": ["nginx-advisories", "cve-2026-123007"]},
+    {"id": "CVE-2026-123633", "title": "Use-after-free in HTTP/2", "sources": ["nginx-advisories", "cve-2026-123633"]},
+    {"id": "CVE-2026-123634", "title": "Use-after-free during response processing in resolver", "sources": ["nginx-advisories", "cve-2026-123634"]}
+  ],
+  "products": [
+    {"key": "a:f5:nginx", "name": "nginx"},
+    {"key": "a:f5:nginx_plus", "name": "NGINX Plus"}
+  ],
+  "affected": [
+    {
+      "product": "a:f5:nginx",
+      "vulns": ["CVE-2026-123007"],
+      "versions": "published",
+      "ranges": [
+        {"branch": "stable", "introduced": "1.9.5", "fixed": "1.30.7"},
+        {"branch": "mainline", "introduced": "1.31.0", "fixed": "1.31.9"}
+      ],
+      "conditions": [{"predicate": "http2_enabled"}],
+      "sources": ["nginx-advisories", "cve-2026-123007"]
+    },
+    {
+      "product": "a:f5:nginx",
+      "vulns": ["CVE-2026-123633"],
+      "versions": "published",
+      "ranges": [
+        {"branch": "stable", "introduced": "1.19.7", "fixed": "1.30.7"},
+        {"branch": "mainline", "introduced": "1.31.0", "fixed": "1.31.9"}
+      ],
+      "conditions": [{"predicate": "http2_enabled", "note": "HTTP/2 for client connections with proxying to a backend, while the worker runs low on worker_connections."}],
+      "sources": ["nginx-advisories", "cve-2026-123633"]
+    },
+    {
+      "product": "a:f5:nginx",
+      "vulns": ["CVE-2026-121810"],
+      "versions": "published",
+      "ranges": [
+        {"branch": "stable", "introduced": "1.25.0", "fixed": "1.30.7"},
+        {"branch": "mainline", "introduced": "1.31.0", "fixed": "1.31.9"}
+      ],
+      "conditions": [{"predicate": "http3_enabled"}],
+      "sources": ["nginx-advisories", "cve-2026-121810", "circl-tr105"]
+    },
+    {
+      "product": "a:f5:nginx",
+      "vulns": ["CVE-2026-113425"],
+      "versions": "published",
+      "ranges": [
+        {"branch": "stable", "introduced": "0.5.33", "fixed": "1.30.7"},
+        {"branch": "mainline", "introduced": "1.31.0", "fixed": "1.31.9"}
+      ],
+      "conditions": [{"predicate": "mail_proxy_auth_http", "note": "nginx configured as a mail proxy; CIRCL adds proxy on with auth_http."}],
+      "sources": ["nginx-advisories", "cve-2026-113425", "circl-tr105"]
+    },
+    {
+      "product": "a:f5:nginx",
+      "vulns": ["CVE-2026-123634"],
+      "versions": "published",
+      "ranges": [
+        {"branch": "stable", "introduced": "0.6.18", "fixed": "1.30.7"},
+        {"branch": "mainline", "introduced": "1.31.0", "fixed": "1.31.9"}
+      ],
+      "conditions": [{"predicate": "resolver_runtime_dns", "note": "proxy_pass with variables in the proxied server name, plus an SSI or mirror subrequest to a location that resolves the same name."}],
+      "sources": ["nginx-advisories", "cve-2026-123634"]
+    },
+    {
+      "product": "a:f5:nginx_plus",
+      "vulns": ["CVE-2026-123007", "CVE-2026-123634", "CVE-2026-113425"],
+      "versions": "published",
+      "ranges": [
+        {"branch": "37.0", "introduced": "37.0.0", "fixed": "37.0.8.1"},
+        {"branch": "37.1", "introduced": "37.1.0", "fixed": "37.3.0.1"}
+      ],
+      "sources": ["cve-2026-123007", "cve-2026-123634", "cve-2026-113425"]
+    },
+    {
+      "product": "a:f5:nginx_plus",
+      "vulns": ["CVE-2026-123633"],
+      "versions": "published",
+      "ranges": [
+        {"branch": "37.0", "introduced": "37.0.0", "fixed": "37.0.7.1"},
+        {"branch": "37.1", "introduced": "37.1.0", "fixed": "37.2.0.1"}
+      ],
+      "conditions": [{"predicate": "http2_enabled"}],
+      "sources": ["cve-2026-123633"]
+    }
+  ],
+  "exploitation": {
+    "status": "poc_public",
+    "note": "The finders published a write-up demonstrating unauthenticated remote code execution in a research setting. No exploitation in the wild was reported at disclosure.",
+    "sources": ["circl-tr105"]
+  },
+  "poc": [
+    {"url": "https://xint.io/blog/nginx2root-remote-code-execution", "kind": "write_up", "title": "NGINX2Root remote code execution (finders' write-up)", "first_seen": "2026-11-18", "sources": ["circl-tr105"]},
+    {"url": "https://nginx2root.com/", "kind": "write_up", "title": "NGINX2Root disclosure site", "first_seen": "2026-11-18", "sources": ["circl-tr105"]}
+  ],
+  "workarounds": [
+    {"text": "Turn HTTP/2 off on affected listeners (http2 off; from 1.25.1, otherwise remove http2 from listen).", "blocks": ["CVE-2026-123007", "CVE-2026-123633"], "caveat": "Breaks gRPC and other clients that need HTTP/2, and leaves the other three vulnerabilities open: not a complete mitigation.", "sources": ["circl-tr105"]},
+    {"text": "Restrict mail proxy listeners to trusted networks.", "blocks": ["CVE-2026-113425"], "sources": ["cve-2026-113425"]},
+    {"text": "Avoid SSI and mirror directives, and avoid a proxied server name built from variables.", "blocks": ["CVE-2026-123634"], "sources": ["cve-2026-123634"]}
+  ],
+  "detection": [
+    {"kind": "version_check", "text": "Read the version with nginx -v; many servers hide it in the Server header (server_tokens off).", "sources": ["circl-tr105"]},
+    {"kind": "safe_check", "text": "Check whether a TLS listener offers HTTP/2 through ALPN h2 (for example openssl s_client -alpn h2).", "sources": ["circl-tr105"]},
+    {"kind": "config_check", "text": "Search the effective configuration (nginx -T) for http2, quic, resolver, mirror, proxy_pass and auth_http.", "sources": ["circl-tr105"]},
+    {"kind": "log_hint", "text": "Look for worker processes that exited on signal 11 or segfaults in the nginx error log, and for nginx core dumps.", "sources": ["circl-tr105"]},
+    {"kind": "host_hint", "text": "Look for nginx worker processes starting unexpected programs or opening unusual outbound connections or DNS lookups.", "sources": ["circl-tr105"]}
+  ],
+  "sources": [
+    {"id": "nginx-advisories", "url": "https://nginx.org/en/security_advisories.html", "publisher": "nginx", "tier": "vendor", "title": "nginx security advisories", "retrieved_at": "2026-11-18T18:00:00Z"},
+    {"id": "cve-2026-113425", "url": "https://www.cve.org/CVERecord?id=CVE-2026-113425", "publisher": "F5 (CNA)", "tier": "cna", "title": "CVE-2026-113425", "retrieved_at": "2026-11-18T18:00:00Z"},
+    {"id": "cve-2026-121810", "url": "https://www.cve.org/CVERecord?id=CVE-2026-121810", "publisher": "F5 (CNA)", "tier": "cna", "title": "CVE-2026-121810", "retrieved_at": "2026-11-18T18:00:00Z"},
+    {"id": "cve-2026-123007", "url": "https://www.cve.org/CVERecord?id=CVE-2026-123007", "publisher": "F5 (CNA)", "tier": "cna", "title": "CVE-2026-123007", "retrieved_at": "2026-11-18T18:00:00Z"},
+    {"id": "cve-2026-123633", "url": "https://www.cve.org/CVERecord?id=CVE-2026-123633", "publisher": "F5 (CNA)", "tier": "cna", "title": "CVE-2026-123633", "retrieved_at": "2026-11-18T18:00:00Z"},
+    {"id": "cve-2026-123634", "url": "https://www.cve.org/CVERecord?id=CVE-2026-123634", "publisher": "F5 (CNA)", "tier": "cna", "title": "CVE-2026-123634", "retrieved_at": "2026-11-18T18:00:00Z"},
+    {"id": "circl-tr105", "url": "https://www.circl.lu/pub/tr-105/", "publisher": "CIRCL", "tier": "cert", "title": "TR-105 NGINX2ROOT", "retrieved_at": "2026-11-18T18:00:00Z"}
+  ],
+  "review": {
+    "state": "reported",
+    "author": "0xmanhnv"
+  },
+  "history": [
+    {"revision": 1, "at": "2026-11-18T18:00:00Z", "note": "First version, from the vendor advisory page, the five CNA records and CIRCL TR-105."}
+  ]
+}
